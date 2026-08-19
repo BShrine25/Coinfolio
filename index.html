@@ -13,6 +13,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -274,26 +275,40 @@ function isClosed(t) { return t.status === "closed"; }
 function sumFees(fees) {
     return (fees || []).reduce((s, f) => s + (Number(f.value) || 0), 0);
 }
-// Open Trades share the margin/entry/exit model with the Ledger, plus fees
-// (which the Ledger doesn't track — fees get netted in before the
-// auto-synced Ledger entry is created). Once a trade is closed, leverage
-// stops being tracked separately (it can fluctuate mid-trade on cross-margin
-// exchanges) — the position size is just entered directly as Total margin.
+// Open trades stay connected to the live ticker: margin/leverage/entry/exit
+// plus a repeatable fee list. Closed trades are deliberately minimal — just
+// a coin, a side, and a final $ gain/loss, no price math involved. (Falls
+// back to the old entry/exit-derived calc for any trade closed before this
+// changed, so nothing already saved breaks.)
 function computeTrade(t, livePrice) {
     const closed = isClosed(t);
-    const effLeverage = closed ? 1 : (Number(t.leverage) || 1);
-    const marginBase = closed ? (Number(t.totalMargin) || 0) : (Number(t.margin) || 0);
+    if (closed) {
+        const netGain = (t.gain !== undefined && t.gain !== null && t.gain !== "")
+            ? Number(t.gain) || 0
+            : (() => {
+                const marginBase = Number(t.totalMargin) || 0;
+                const entry = Number(t.entry) || 0;
+                const notional = marginBase;
+                const qty = entry ? notional / entry : 0;
+                const price = Number(t.exit) || 0;
+                const raw = t.side === "short" ? notional - qty * price : qty * price - notional;
+                return raw - sumFees(t.fees);
+            })();
+        return { closed: true, notional: 0, qty: 0, currentValue: null, netGain, netPayout: netGain, pnlPct: null, totalFees: 0, marginBase: null };
+    }
+    const leverage = Number(t.leverage) || 1;
+    const marginBase = Number(t.margin) || 0;
     const entry = Number(t.entry) || 0;
     const totalFees = sumFees(t.fees);
-    const notional = marginBase * effLeverage;
+    const notional = marginBase * leverage;
     const qty = entry ? notional / entry : 0;
-    const price = closed ? (Number(t.exit) || 0) : (livePrice !== null && livePrice !== void 0 ? livePrice : (Number(t.exit) || 0));
+    const price = livePrice !== null && livePrice !== void 0 ? livePrice : (Number(t.exit) || 0);
     const currentValue = qty * price;
     const raw = t.side === "short" ? notional - currentValue : currentValue - notional;
     const netGain = raw - totalFees;
     const netPayout = marginBase + netGain;
     const pnlPct = marginBase !== 0 ? (netGain / marginBase) * 100 : 0;
-    return { closed, notional, qty, currentValue, netGain, netPayout, pnlPct, totalFees, marginBase };
+    return { closed: false, notional, qty, currentValue, netGain, netPayout, pnlPct, totalFees, marginBase };
 }
 /* ---------------------------------------------------------------
    Ledger helpers — date grouping + pace-to-goal
@@ -353,20 +368,33 @@ function paceToGoal({ initialBalance, currentBalance, target, positionPct, lever
     return { multiplier, totalTradesFromStart, remainingPlanned, tradesNeededNow, tradesBehind, dollarGap, pctGap, tradesPerDay, etaDate };
 }
 /* ---------------------------------------------------------------
-   Storage
+   Storage — backed by Supabase instead of localStorage, so data
+   follows the logged-in user across browsers and devices. One row
+   per (user, key), value stored directly as jsonb — no more manual
+   JSON.stringify/parse needed.
 ---------------------------------------------------------------- */
+const SUPABASE_URL = "https://ogrbhzqoyhydfjrsexit.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Lk1wGqBcUzO3FeOOynBlvg_CcEPsW3h";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let CURRENT_USER_ID = null;
 async function safeStorageGet(key) {
+    if (!CURRENT_USER_ID)
+        return null;
     try {
-        const raw = localStorage.getItem(key);
-        return raw ? JSON.parse(raw) : null;
+        const { data, error } = await sb.from("coinfolio_data").select("value").eq("user_id", CURRENT_USER_ID).eq("key", key).maybeSingle();
+        if (error || !data)
+            return null;
+        return data.value;
     }
     catch (e) {
         return null;
     }
 }
 async function safeStorageSet(key, value) {
+    if (!CURRENT_USER_ID)
+        return;
     try {
-        localStorage.setItem(key, JSON.stringify(value));
+        await sb.from("coinfolio_data").upsert({ user_id: CURRENT_USER_ID, key, value, updated_at: new Date().toISOString() });
     }
     catch (e) { }
 }
@@ -471,22 +499,25 @@ function TickerStrip({ prices, coins, loading }) {
 /* =================================================================
    SPOT TRADES (generic buy/sell log)
 ================================================================= */
-const emptyTrade = () => ({ id: null, coin: "BTC", customCoin: "", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
+const emptyTrade = () => ({ id: null, coin: "BTC", customCoin: "", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], gain: "", status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
 function TradeForm({ initial, onSave, onCancel, prices }) {
     var _a;
     const [t, setT] = useState(initial || emptyTrade());
     const [manualExit, setManualExit] = useState(!!initial);
     const set = (k, v) => setT((p) => ({ ...p, [k]: v }));
     const isCustom = t.coin === "__custom__";
+    const closed = isClosed(t);
     const livePrice = isCustom ? null : ((_a = prices[coinIdFor(t.coin)]) !== null && _a !== void 0 ? _a : null);
     useEffect(() => {
         if (livePrice && !manualExit)
             set("exit", livePrice);
     }, [livePrice, t.coin]); // eslint-disable-line
     const setStatus = (status) => {
-        if (status === "closed" && !t.totalMargin) {
-            const suggested = (Number(t.margin) || 0) * (Number(t.leverage) || 1);
-            setT((p) => ({ ...p, status, totalMargin: suggested ? String(suggested) : "" }));
+        if (status === "closed" && t.gain === "") {
+            // switching an open position to closed — prefill with its current
+            // unrealized value as a starting point, editable from there
+            const suggested = computeTrade({ ...t, margin: t.margin || 0, entry: t.entry || 0, exit: t.exit || 0, leverage: t.leverage || 1 }, livePrice).netGain;
+            setT((p) => ({ ...p, status, gain: suggested ? String(Math.round(suggested * 100) / 100) : "" }));
         }
         else {
             set("status", status);
@@ -495,21 +526,61 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
     const setFee = (id, val) => setT((p) => ({ ...p, fees: p.fees.map((f) => (f.id === id ? { ...f, value: val } : f)) }));
     const addFee = () => setT((p) => ({ ...p, fees: [...p.fees, { id: uid(), value: "" }] }));
     const removeFee = (id) => setT((p) => ({ ...p, fees: p.fees.filter((f) => f.id !== id) }));
-    const preview = computeTrade({ ...t, margin: t.margin || 0, totalMargin: t.totalMargin || 0, entry: t.entry || 0, exit: t.exit || 0, leverage: t.leverage || 1 }, livePrice);
+    const preview = computeTrade({ ...t, margin: t.margin || 0, entry: t.entry || 0, exit: t.exit || 0, leverage: t.leverage || 1, gain: t.gain === "" ? undefined : t.gain }, livePrice);
     const totalFees = sumFees(t.fees);
     const submit = () => {
-        const marginOk = isClosed(t) ? (t.totalMargin && Number(t.totalMargin) > 0) : (t.margin && Number(t.margin) > 0);
-        if (!marginOk || !t.entry)
+        if (closed) {
+            if (t.gain === "" || t.gain === null)
+                return;
+        }
+        else if (!t.margin || Number(t.margin) <= 0 || !t.entry) {
             return;
+        }
         const coinSymbol = isCustom ? (t.customCoin || "CUSTOM").toUpperCase() : t.coin;
         onSave({
             ...t, id: t.id || uid(), coin: coinSymbol,
             margin: Number(t.margin) || 0, totalMargin: Number(t.totalMargin) || 0,
-            entry: Number(t.entry), exit: t.exit === "" ? 0 : Number(t.exit),
+            entry: t.entry === "" ? 0 : Number(t.entry), exit: t.exit === "" ? 0 : Number(t.exit),
             leverage: Number(t.leverage) || 1,
+            gain: closed ? (Number(t.gain) || 0) : "",
             fees: t.fees.map((f) => ({ id: f.id, value: Number(f.value) || 0 })),
         });
     };
+    if (closed) {
+        return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+                React.createElement(Field, { label: "Coin" },
+                    React.createElement(Select, { value: t.coin, onChange: (e) => set("coin", e.target.value) },
+                        allCoinSymbols().map((c) => React.createElement("option", { key: c, value: c }, c)),
+                        React.createElement("option", { value: "__custom__" }, "Custom / other\u2026"))),
+                isCustom && React.createElement(Field, { label: "Symbol" },
+                    React.createElement(TextInput, { placeholder: "e.g. TAO", value: t.customCoin, onChange: (e) => set("customCoin", e.target.value) })),
+                React.createElement(Field, { label: "Side" },
+                    React.createElement(Select, { value: t.side, onChange: (e) => set("side", e.target.value) },
+                        React.createElement("option", { value: "long" }, "Long"),
+                        React.createElement("option", { value: "short" }, "Short"))),
+                React.createElement(Field, { label: "Gain / loss ($)", hint: "Final result, fees already netted in" },
+                    React.createElement(TextInput, { type: "number", step: "any", placeholder: "e.g. 45.20 or -12.50", value: t.gain, onChange: (e) => set("gain", e.target.value) })),
+                React.createElement(Field, { label: "Status" },
+                    React.createElement(Select, { value: t.status, onChange: (e) => setStatus(e.target.value) },
+                        React.createElement("option", { value: "open" }, "Open"),
+                        React.createElement("option", { value: "closed" }, "Closed")))),
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+                React.createElement(Field, { label: "Date" },
+                    React.createElement(TextInput, { type: "date", value: t.date, onChange: (e) => set("date", e.target.value) })),
+                React.createElement(Field, { label: "Notes", className: "md:col-span-3" },
+                    React.createElement(TextInput, { placeholder: "Optional", value: t.notes, onChange: (e) => set("notes", e.target.value) }))),
+            t.gain !== "" && (React.createElement("div", { className: "flex items-center gap-4 px-3 py-2 rounded flex-wrap", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+                React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: 600, color: (Number(t.gain) || 0) >= 0 ? C.gain : C.loss } }, fmtUsd(Number(t.gain) || 0)),
+                React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.violet } }, "\u2192 syncs to Ledger automatically"))),
+            React.createElement("div", { className: "flex gap-2 justify-end pt-1" },
+                React.createElement(Button, { variant: "ghost", onClick: onCancel },
+                    React.createElement(X, { size: 14 }),
+                    " Cancel"),
+                React.createElement(Button, { variant: "primary", onClick: submit },
+                    React.createElement(Check, { size: 14 }),
+                    " Save trade"))));
+    }
     return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Coin" },
@@ -524,12 +595,10 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
                 React.createElement(Select, { value: t.side, onChange: (e) => set("side", e.target.value) },
                     React.createElement("option", { value: "long" }, "Long"),
                     React.createElement("option", { value: "short" }, "Short"))),
-            isClosed(t) ? (React.createElement(Field, { label: "Total margin ($)", hint: "Full position size \u2014 leverage already baked in", className: isCustom ? "" : "md:col-span-2" },
-                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.totalMargin, onChange: (e) => set("totalMargin", e.target.value) }))) : (React.createElement(React.Fragment, null,
-                React.createElement(Field, { label: "Margin ($)" },
-                    React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.margin, onChange: (e) => set("margin", e.target.value) })),
-                React.createElement(Field, { label: "Leverage" },
-                    React.createElement(TextInput, { type: "number", min: "1", step: "0.1", value: t.leverage, onChange: (e) => set("leverage", e.target.value) }))))),
+            React.createElement(Field, { label: "Margin ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.margin, onChange: (e) => set("margin", e.target.value) })),
+            React.createElement(Field, { label: "Leverage" },
+                React.createElement(TextInput, { type: "number", min: "1", step: "0.1", value: t.leverage, onChange: (e) => set("leverage", e.target.value) }))),
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Entry price ($)" },
                 React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.entry, onChange: (e) => set("entry", e.target.value) })),
@@ -559,7 +628,7 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
             React.createElement(Field, { label: "Notes", className: "md:col-span-3" },
                 React.createElement(TextInput, { placeholder: "Optional", value: t.notes, onChange: (e) => set("notes", e.target.value) }))),
         React.createElement("div", { className: "flex items-center gap-4 px-3 py-2 rounded flex-wrap", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
-            React.createElement("span", { style: { color: C.muted, fontSize: 12, fontFamily: "Inter" } }, t.status === "closed" ? "Net payout" : "Unrealized value"),
+            React.createElement("span", { style: { color: C.muted, fontSize: 12, fontFamily: "Inter" } }, "Unrealized value"),
             React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 14, color: preview.netGain >= 0 ? C.gain : C.loss, fontWeight: 600 } }, fmtUsd(preview.netPayout)),
             React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: preview.netGain >= 0 ? C.gain : C.loss } },
                 "(",
@@ -567,8 +636,7 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
                 ")"),
             totalFees !== 0 && React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: totalFees < 0 ? C.gain : C.faint } },
                 "Fees ",
-                fmtUsd(totalFees)),
-            t.status === "closed" && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.violet } }, "\u2192 syncs to Ledger automatically")),
+                fmtUsd(totalFees))),
         React.createElement("div", { className: "flex gap-2 justify-end pt-1" },
             React.createElement(Button, { variant: "ghost", onClick: onCancel },
                 React.createElement(X, { size: 14 }),
@@ -591,7 +659,7 @@ function OpenTradeRow({ t, price, onEdit, onDelete }) {
                 React.createElement(Badge, { tone: t.side === "short" ? "loss" : "muted" }, t.side),
                 c.closed && React.createElement(Badge, { tone: "muted" }, "Closed")),
             React.createElement("div", { className: "flex items-center gap-4", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
-                React.createElement("span", { style: { color: C.faint }, className: "hidden sm:inline" },
+                !c.closed && React.createElement("span", { style: { color: C.faint }, className: "hidden sm:inline" },
                     "Entry ",
                     fmtUsd(Number(t.entry)),
                     " \u2192 ",
@@ -606,29 +674,28 @@ function OpenTradeRow({ t, price, onEdit, onDelete }) {
                 React.createElement(Button, { variant: "danger", onClick: () => onDelete(t.id) },
                     React.createElement(Trash2, { size: 13 }),
                     " Delete")),
-            React.createElement("div", { className: "grid grid-cols-2 gap-x-4 gap-y-1.5", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
-                React.createElement("span", { style: { color: C.faint } }, c.closed ? "Total margin" : "Margin"),
+            c.closed ? (React.createElement("div", { className: "grid grid-cols-2 gap-x-4 gap-y-1.5", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
+                React.createElement("span", { style: { color: C.faint } }, "Date"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, t.date))) : (React.createElement("div", { className: "grid grid-cols-2 gap-x-4 gap-y-1.5", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
+                React.createElement("span", { style: { color: C.faint } }, "Margin"),
                 React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(c.marginBase)),
-                !c.closed && React.createElement(React.Fragment, null,
-                    React.createElement("span", { style: { color: C.faint } }, "Leverage"),
-                    React.createElement("span", { style: { color: C.text, textAlign: "right" } },
-                        t.leverage,
-                        "x")),
+                React.createElement("span", { style: { color: C.faint } }, "Leverage"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } },
+                    t.leverage,
+                    "x"),
                 React.createElement("span", { style: { color: C.faint } }, "Notional"),
                 React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(c.notional)),
                 React.createElement("span", { style: { color: C.faint } }, "Fees"),
                 React.createElement("span", { style: { color: c.totalFees < 0 ? C.gain : C.text, textAlign: "right" } }, fmtUsd(c.totalFees)),
-                React.createElement("span", { style: { color: C.faint } }, c.closed ? "Exit value" : "Current value"),
+                React.createElement("span", { style: { color: C.faint } }, "Current value"),
                 React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(c.currentValue)),
                 React.createElement("span", { style: { color: C.faint } }, "Date"),
-                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, t.date)),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, t.date))),
             React.createElement("div", { className: "flex items-center justify-between px-3 py-2 rounded", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
                 React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, c.closed ? "Realized P&L" : "Unrealized P&L"),
                 React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: 600, color } },
                     fmtUsd(upDown),
-                    " (",
-                    fmtPct(c.pnlPct),
-                    ")")),
+                    c.pnlPct !== null && ` (${fmtPct(c.pnlPct)})`)),
             c.closed && React.createElement("p", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Editing this updates its synced Ledger entry too. Deleting removes both."),
             t.notes && React.createElement("p", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, t.notes)))));
 }
@@ -1267,9 +1334,80 @@ function GoalsTab({ goals, setGoals, currentPortfolioValue }) {
             React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No goals yet."))) : (React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4" }, goals.map((g) => React.createElement(GoalCard, { key: g.id, goal: g, onChange: updateGoal, onDelete: deleteGoal, currentPortfolioValue: currentPortfolioValue }))))));
 }
 /* =================================================================
+   AUTH — magic-link login, so data follows the account not the browser
+================================================================= */
+function Login({ initialError }) {
+    const [email, setEmail] = useState("");
+    const [sent, setSent] = useState(false);
+    const [error, setError] = useState(initialError || null);
+    const [loading, setLoading] = useState(false);
+    const sendLink = async () => {
+        if (!email)
+            return;
+        setLoading(true);
+        setError(null);
+        const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+        setLoading(false);
+        if (error)
+            setError(error.message);
+        else
+            setSent(true);
+    };
+    return (React.createElement("div", { className: "min-h-screen w-full flex items-center justify-center px-4", style: { background: C.void } },
+        React.createElement("style", null, `${FONT_IMPORT} * { box-sizing: border-box; }`),
+        React.createElement(Panel, { style: { padding: 32, maxWidth: 360, width: "100%" }, className: "flex flex-col gap-4" },
+            React.createElement("div", { className: "flex items-center gap-2.5 justify-center pb-1" },
+                React.createElement("div", { className: "w-8 h-8 rounded-full flex items-center justify-center", style: { background: "#F7931A" } },
+                    React.createElement("span", { style: { fontFamily: "Georgia, serif", fontWeight: 700, fontSize: 16, color: "#fff" } }, "\u20BF")),
+                React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 20, fontWeight: 600, color: C.text } }, "Coinfolio")),
+            sent ? (React.createElement("div", { className: "text-center flex flex-col gap-2 py-2" },
+                React.createElement("p", { style: { fontFamily: "Inter", fontSize: 14, color: C.text, fontWeight: 600 } }, "Check your email"),
+                React.createElement("p", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } },
+                    "Sent a sign-in link to ",
+                    email,
+                    " \u2014 tap it on this device to log in."))) : (React.createElement(React.Fragment, null,
+                React.createElement("p", { style: { fontFamily: "Inter", fontSize: 13, color: C.muted, textAlign: "center" } }, "Sign in with your email \u2014 no password needed."),
+                React.createElement(TextInput, { type: "email", placeholder: "you@example.com", value: email, onChange: (e) => setEmail(e.target.value), onKeyDown: (e) => e.key === "Enter" && sendLink() }),
+                error && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.loss } }, error),
+                React.createElement(Button, { variant: "primary", onClick: sendLink, disabled: loading || !email }, loading ? "Sending…" : "Send sign-in link"))))));
+}
+function AppRoot() {
+    const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
+    const [authError, setAuthError] = useState(null);
+    useEffect(() => {
+        sb.auth.getSession()
+            .then(({ data, error }) => {
+            var _a, _b;
+            if (error) {
+                setAuthError(error.message);
+                setSession(null);
+                return;
+            }
+            CURRENT_USER_ID = ((_b = (_a = data.session) === null || _a === void 0 ? void 0 : _a.user) === null || _b === void 0 ? void 0 : _b.id) || null;
+            setSession(data.session);
+        })
+            .catch((e) => { setAuthError(String((e === null || e === void 0 ? void 0 : e.message) || e)); setSession(null); });
+        const { data: listener } = sb.auth.onAuthStateChange((_event, newSession) => {
+            var _a;
+            CURRENT_USER_ID = ((_a = newSession === null || newSession === void 0 ? void 0 : newSession.user) === null || _a === void 0 ? void 0 : _a.id) || null;
+            setSession(newSession);
+        });
+        return () => listener.subscription.unsubscribe();
+    }, []);
+    if (session === undefined && !authError) {
+        return React.createElement("div", { className: "min-h-screen flex items-center justify-center", style: { background: C.void } },
+            React.createElement("span", { style: { color: C.muted, fontFamily: "Inter" } }, "Loading\u2026"));
+    }
+    if (authError)
+        return React.createElement(Login, { initialError: authError });
+    if (!session)
+        return React.createElement(Login, null);
+    return React.createElement(App, { key: session.user.id, onSignOut: () => sb.auth.signOut(), userEmail: session.user.email });
+}
+/* =================================================================
    APP
 ================================================================= */
-function App() {
+function App({ onSignOut, userEmail }) {
     useEffect(() => {
         document.title = "Coinfolio · history loaded";
     }, []);
@@ -1529,12 +1667,16 @@ function App() {
                 importMsg && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: importMsg.ok ? C.gain : C.loss } }, importMsg.text),
                 React.createElement("input", { ref: fileInputRef, type: "file", accept: "application/json", style: { display: "none" }, onChange: (e) => { if (e.target.files[0])
                         importAllData(e.target.files[0]); e.target.value = ""; } }),
+                React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint }, className: "hidden sm:inline" }, userEmail),
                 React.createElement(Button, { variant: "ghost", onClick: () => { var _a; return (_a = fileInputRef.current) === null || _a === void 0 ? void 0 : _a.click(); } },
                     React.createElement(Layers, { size: 14 }),
                     " Import backup"),
                 React.createElement(Button, { variant: "ghost", onClick: exportAllData },
                     React.createElement(Download, { size: 14 }),
-                    " Backup"))),
+                    " Backup"),
+                React.createElement(Button, { variant: "ghost", onClick: onSignOut },
+                    React.createElement(X, { size: 14 }),
+                    " Sign out"))),
         React.createElement("nav", { className: "flex gap-1 px-5 pt-4 overflow-x-auto" }, tabs.map((tItem) => {
             const Icon = tItem.Icon;
             const active = tab === tItem.id;
@@ -1575,7 +1717,7 @@ function App() {
         React.createElement("footer", { className: "px-5 py-4 border-t text-center", style: { borderColor: C.hair } },
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
 
 </script>
 </body>
