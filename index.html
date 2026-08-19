@@ -1337,22 +1337,42 @@ function GoalsTab({ goals, setGoals, currentPortfolioValue }) {
    AUTH — magic-link login, so data follows the account not the browser
 ================================================================= */
 function Login({ initialError }) {
+    const [mode, setMode] = useState("signin"); // signin | signup | forgot
     const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
     const [sent, setSent] = useState(false);
     const [error, setError] = useState(initialError || null);
     const [loading, setLoading] = useState(false);
-    const sendLink = async () => {
-        if (!email)
+    const submit = async () => {
+        if (!email || (mode !== "forgot" && !password))
             return;
         setLoading(true);
         setError(null);
-        const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
-        setLoading(false);
-        if (error)
-            setError(error.message);
-        else
-            setSent(true);
+        if (mode === "signin") {
+            const { error } = await sb.auth.signInWithPassword({ email, password });
+            setLoading(false);
+            if (error)
+                setError(error.message);
+        }
+        else if (mode === "signup") {
+            const { error } = await sb.auth.signUp({ email, password });
+            setLoading(false);
+            if (error)
+                setError(error.message);
+            else
+                setSent(true);
+        }
+        else {
+            const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
+            setLoading(false);
+            if (error)
+                setError(error.message);
+            else
+                setSent(true);
+        }
     };
+    const titles = { signin: "Sign in", signup: "Create account", forgot: "Reset password" };
+    const buttonLabels = { signin: "Sign in", signup: "Create account", forgot: "Send reset link" };
     return (React.createElement("div", { className: "min-h-screen w-full flex items-center justify-center px-4", style: { background: C.void } },
         React.createElement("style", null, `${FONT_IMPORT} * { box-sizing: border-box; }`),
         React.createElement(Panel, { style: { padding: 32, maxWidth: 360, width: "100%" }, className: "flex flex-col gap-4" },
@@ -1362,18 +1382,52 @@ function Login({ initialError }) {
                 React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 20, fontWeight: 600, color: C.text } }, "Coinfolio")),
             sent ? (React.createElement("div", { className: "text-center flex flex-col gap-2 py-2" },
                 React.createElement("p", { style: { fontFamily: "Inter", fontSize: 14, color: C.text, fontWeight: 600 } }, "Check your email"),
-                React.createElement("p", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } },
-                    "Sent a sign-in link to ",
-                    email,
-                    " \u2014 tap it on this device to log in."))) : (React.createElement(React.Fragment, null,
-                React.createElement("p", { style: { fontFamily: "Inter", fontSize: 13, color: C.muted, textAlign: "center" } }, "Sign in with your email \u2014 no password needed."),
-                React.createElement(TextInput, { type: "email", placeholder: "you@example.com", value: email, onChange: (e) => setEmail(e.target.value), onKeyDown: (e) => e.key === "Enter" && sendLink() }),
+                React.createElement("p", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, mode === "signup" ? `Confirm ${email} to finish creating your account.` : `Sent a password reset link to ${email}.`),
+                React.createElement(Button, { variant: "ghost", onClick: () => { setSent(false); setMode("signin"); } }, "Back to sign in"))) : (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "flex gap-1 justify-center pb-1" }, ["signin", "signup", "forgot"].map((m) => (React.createElement("button", { key: m, onClick: () => { setMode(m); setError(null); }, className: "px-2.5 py-1 rounded text-xs font-medium", style: { fontFamily: "Inter", background: mode === m ? C.accent : "transparent", color: mode === m ? "#fff" : C.muted, border: `1px solid ${mode === m ? C.accent : C.hair2}` } }, titles[m])))),
+                React.createElement(TextInput, { type: "email", placeholder: "you@example.com", value: email, onChange: (e) => setEmail(e.target.value) }),
+                mode !== "forgot" && React.createElement(TextInput, { type: "password", placeholder: "Password", value: password, onChange: (e) => setPassword(e.target.value), onKeyDown: (e) => e.key === "Enter" && submit() }),
                 error && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.loss } }, error),
-                React.createElement(Button, { variant: "primary", onClick: sendLink, disabled: loading || !email }, loading ? "Sending…" : "Send sign-in link"))))));
+                React.createElement(Button, { variant: "primary", onClick: submit, disabled: loading || !email || (mode !== "forgot" && !password) }, loading ? "Working…" : buttonLabels[mode]),
+                mode === "signin" && React.createElement("p", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint, textAlign: "center" } }, "First time on this device with an account made via email link? Use \"Reset password\" to set one."))))));
+}
+function SetNewPassword({ onDone }) {
+    const [password, setPassword] = useState("");
+    const [confirm, setConfirm] = useState("");
+    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const submit = async () => {
+        if (!password || password.length < 6) {
+            setError("Password must be at least 6 characters.");
+            return;
+        }
+        if (password !== confirm) {
+            setError("Passwords don't match.");
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        const { error } = await sb.auth.updateUser({ password });
+        setLoading(false);
+        if (error)
+            setError(error.message);
+        else
+            onDone();
+    };
+    return (React.createElement("div", { className: "min-h-screen w-full flex items-center justify-center px-4", style: { background: C.void } },
+        React.createElement("style", null, `${FONT_IMPORT} * { box-sizing: border-box; }`),
+        React.createElement(Panel, { style: { padding: 32, maxWidth: 360, width: "100%" }, className: "flex flex-col gap-4" },
+            React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 18, fontWeight: 600, color: C.text, textAlign: "center" } }, "Set a password"),
+            React.createElement("p", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted, textAlign: "center" } }, "Once this is set, you can log in directly from any browser or your Home Screen icon \u2014 no more email links."),
+            React.createElement(TextInput, { type: "password", placeholder: "New password", value: password, onChange: (e) => setPassword(e.target.value) }),
+            React.createElement(TextInput, { type: "password", placeholder: "Confirm password", value: confirm, onChange: (e) => setConfirm(e.target.value), onKeyDown: (e) => e.key === "Enter" && submit() }),
+            error && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.loss } }, error),
+            React.createElement(Button, { variant: "primary", onClick: submit, disabled: loading }, loading ? "Saving…" : "Set password"))));
 }
 function AppRoot() {
     const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
     const [authError, setAuthError] = useState(null);
+    const [recovery, setRecovery] = useState(false);
     useEffect(() => {
         sb.auth.getSession()
             .then(({ data, error }) => {
@@ -1387,8 +1441,10 @@ function AppRoot() {
             setSession(data.session);
         })
             .catch((e) => { setAuthError(String((e === null || e === void 0 ? void 0 : e.message) || e)); setSession(null); });
-        const { data: listener } = sb.auth.onAuthStateChange((_event, newSession) => {
+        const { data: listener } = sb.auth.onAuthStateChange((event, newSession) => {
             var _a;
+            if (event === "PASSWORD_RECOVERY")
+                setRecovery(true);
             CURRENT_USER_ID = ((_a = newSession === null || newSession === void 0 ? void 0 : newSession.user) === null || _a === void 0 ? void 0 : _a.id) || null;
             setSession(newSession);
         });
@@ -1398,6 +1454,8 @@ function AppRoot() {
         return React.createElement("div", { className: "min-h-screen flex items-center justify-center", style: { background: C.void } },
             React.createElement("span", { style: { color: C.muted, fontFamily: "Inter" } }, "Loading\u2026"));
     }
+    if (recovery)
+        return React.createElement(SetNewPassword, { onDone: () => setRecovery(false) });
     if (authError)
         return React.createElement(Login, { initialError: authError });
     if (!session)
