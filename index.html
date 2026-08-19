@@ -85,6 +85,31 @@ const COIN_MAP = {
 };
 const COIN_LIST = Object.keys(COIN_MAP).sort();
 /* ---------------------------------------------------------------
+   Custom coins — anything typed in as "Custom / other…" and resolved
+   against CoinGecko's search gets remembered here permanently, so it
+   shows up as a normal option (and gets live prices) from then on.
+   Kept as a plain mutable object rather than React state: registration
+   always happens alongside a trade/position save, which already
+   triggers the re-render that picks up the change.
+---------------------------------------------------------------- */
+let CUSTOM_COINS = {}; // { SYMBOL: coingeckoId }
+function coinIdFor(symbol) { return CUSTOM_COINS[symbol] || COIN_MAP[symbol] || null; }
+function allCoinSymbols() { return Array.from(new Set([...COIN_LIST, ...Object.keys(CUSTOM_COINS)])).sort(); }
+function registerCustomCoin(symbol, coingeckoId) {
+    CUSTOM_COINS = { ...CUSTOM_COINS, [symbol]: coingeckoId };
+    safeStorageSet("coinfolio_custom_coins", CUSTOM_COINS);
+}
+async function searchCoinGecko(query) {
+    try {
+        const res = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        return (data.coins || []).slice(0, 6);
+    }
+    catch (e) {
+        return [];
+    }
+}
+/* ---------------------------------------------------------------
    Imported history — extracted from the user's "Full Port, .5 Pull",
    "Full Details", and "Long Term Port" sheets. Trade order and dates
    are verified exact (color-block day grouping, zero mismatches
@@ -388,9 +413,54 @@ function SummaryCard({ label, value, sub, tone }) {
 /* ---------------------------------------------------------------
    Ticker strip
 ---------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   CustomCoinResolver — type a symbol, search CoinGecko, pick the
+   real match, and it's remembered permanently from then on.
+---------------------------------------------------------------- */
+function CustomCoinResolver({ symbol, onResolved }) {
+    const [results, setResults] = useState(null);
+    const [searching, setSearching] = useState(false);
+    const [searchedFor, setSearchedFor] = useState(null);
+    const runSearch = async () => {
+        if (!symbol)
+            return;
+        setSearching(true);
+        const found = await searchCoinGecko(symbol);
+        setResults(found);
+        setSearchedFor(symbol);
+        setSearching(false);
+    };
+    const pick = (coin) => {
+        const sym = (symbol || coin.symbol || "").toUpperCase();
+        registerCustomCoin(sym, coin.id);
+        onResolved(sym);
+    };
+    return (React.createElement("div", { className: "flex flex-col gap-2" },
+        React.createElement("div", { className: "flex items-center gap-2" },
+            React.createElement(Button, { variant: "ghost", onClick: runSearch, disabled: !symbol || searching },
+                React.createElement(RefreshCw, { size: 13, className: searching ? "animate-spin" : "" }),
+                " Find on CoinGecko"),
+            searchedFor && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } },
+                "Results for \"",
+                searchedFor,
+                "\"")),
+        results && results.length === 0 && (React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.loss } }, "No matches \u2014 check the spelling, or it may not be on CoinGecko.")),
+        results && results.length > 0 && (React.createElement("div", { className: "flex flex-col gap-1.5" }, results.map((r) => {
+            var _a;
+            return (React.createElement("button", { key: r.id, onClick: () => pick(r), className: "flex items-center justify-between px-3 py-2 rounded hover:opacity-80", style: { background: C.panelRaised, border: `1px solid ${C.hair2}`, cursor: "pointer" } },
+                React.createElement("span", { style: { fontFamily: "Inter", fontSize: 13, color: C.text } },
+                    r.name,
+                    " ",
+                    React.createElement("span", { style: { color: C.faint } },
+                        "(", (_a = r.symbol) === null || _a === void 0 ? void 0 :
+                        _a.toUpperCase(),
+                        ")")),
+                React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 11, color: C.violet } }, "Use this")));
+        })))));
+}
 function TickerStrip({ prices, coins, loading }) {
     const list = coins.length ? coins : ["BTC", "ETH", "SOL", "BNB", "XRP"];
-    const items = list.map((sym) => ({ sym, price: prices[COIN_MAP[sym]] }));
+    const items = list.map((sym) => ({ sym, price: prices[coinIdFor(sym)] }));
     const doubled = [...items, ...items];
     return (React.createElement("div", { className: "w-full overflow-hidden border-b", style: { borderColor: C.hair, background: C.void } },
         React.createElement("div", { className: "flex items-center gap-8 py-2 ticker-track" }, doubled.map((it, i) => (React.createElement("div", { key: i, className: "flex items-center gap-2 shrink-0 px-2" },
@@ -401,13 +471,14 @@ function TickerStrip({ prices, coins, loading }) {
 /* =================================================================
    SPOT TRADES (generic buy/sell log)
 ================================================================= */
-const emptyTrade = () => ({ id: null, coin: "BTC", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
+const emptyTrade = () => ({ id: null, coin: "BTC", customCoin: "", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
 function TradeForm({ initial, onSave, onCancel, prices }) {
     var _a;
     const [t, setT] = useState(initial || emptyTrade());
     const [manualExit, setManualExit] = useState(!!initial);
     const set = (k, v) => setT((p) => ({ ...p, [k]: v }));
-    const livePrice = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : null;
+    const isCustom = t.coin === "__custom__";
+    const livePrice = isCustom ? null : ((_a = prices[coinIdFor(t.coin)]) !== null && _a !== void 0 ? _a : null);
     useEffect(() => {
         if (livePrice && !manualExit)
             set("exit", livePrice);
@@ -430,8 +501,9 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
         const marginOk = isClosed(t) ? (t.totalMargin && Number(t.totalMargin) > 0) : (t.margin && Number(t.margin) > 0);
         if (!marginOk || !t.entry)
             return;
+        const coinSymbol = isCustom ? (t.customCoin || "CUSTOM").toUpperCase() : t.coin;
         onSave({
-            ...t, id: t.id || uid(),
+            ...t, id: t.id || uid(), coin: coinSymbol,
             margin: Number(t.margin) || 0, totalMargin: Number(t.totalMargin) || 0,
             entry: Number(t.entry), exit: t.exit === "" ? 0 : Number(t.exit),
             leverage: Number(t.leverage) || 1,
@@ -441,12 +513,18 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
     return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Coin" },
-                React.createElement(Select, { value: t.coin, onChange: (e) => { set("coin", e.target.value); setManualExit(false); } }, COIN_LIST.map((c) => React.createElement("option", { key: c, value: c }, c)))),
+                React.createElement(Select, { value: t.coin, onChange: (e) => { set("coin", e.target.value); setManualExit(false); } },
+                    allCoinSymbols().map((c) => React.createElement("option", { key: c, value: c }, c)),
+                    React.createElement("option", { value: "__custom__" }, "Custom / other\u2026"))),
+            isCustom && (React.createElement(Field, { label: "Symbol", hint: "Search CoinGecko to enable live pricing", className: "md:col-span-1" },
+                React.createElement("div", { className: "flex flex-col gap-2" },
+                    React.createElement(TextInput, { placeholder: "e.g. TAO", value: t.customCoin, onChange: (e) => set("customCoin", e.target.value) }),
+                    React.createElement(CustomCoinResolver, { symbol: t.customCoin, onResolved: (sym) => { set("coin", sym); set("customCoin", ""); } })))),
             React.createElement(Field, { label: "Side", hint: "Short flips the P&L direction" },
                 React.createElement(Select, { value: t.side, onChange: (e) => set("side", e.target.value) },
                     React.createElement("option", { value: "long" }, "Long"),
                     React.createElement("option", { value: "short" }, "Short"))),
-            isClosed(t) ? (React.createElement(Field, { label: "Total margin ($)", hint: "Full position size \u2014 leverage already baked in", className: "md:col-span-2" },
+            isClosed(t) ? (React.createElement(Field, { label: "Total margin ($)", hint: "Full position size \u2014 leverage already baked in", className: isCustom ? "" : "md:col-span-2" },
                 React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.totalMargin, onChange: (e) => set("totalMargin", e.target.value) }))) : (React.createElement(React.Fragment, null,
                 React.createElement(Field, { label: "Margin ($)" },
                     React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.margin, onChange: (e) => set("margin", e.target.value) })),
@@ -558,7 +636,7 @@ function TradesTable({ trades, prices, onEdit, onDelete }) {
     if (!trades.length)
         return React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
             React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No open trades right now. Closed trades live in the Ledger."));
-    return (React.createElement("div", { className: "flex flex-col gap-2" }, trades.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((t) => (React.createElement(OpenTradeRow, { key: t.id, t: t, price: prices[COIN_MAP[t.coin]], onEdit: onEdit, onDelete: onDelete })))));
+    return (React.createElement("div", { className: "flex flex-col gap-2" }, trades.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((t) => (React.createElement(OpenTradeRow, { key: t.id, t: t, price: prices[coinIdFor(t.coin)], onEdit: onEdit, onDelete: onDelete })))));
 }
 /* =================================================================
    DASHBOARD
@@ -566,7 +644,7 @@ function TradesTable({ trades, prices, onEdit, onDelete }) {
 function Dashboard({ trades, prices, overrides, setOverride, onRefresh, loading, updatedAt, ledgerBalance, longTermValue }) {
     const open = trades.filter((t) => !isClosed(t));
     const closed = trades.filter(isClosed);
-    const totalRealized = closed.reduce((s, t) => s + computeTrade(t, prices[COIN_MAP[t.coin]]).netGain, 0);
+    const totalRealized = closed.reduce((s, t) => s + computeTrade(t, prices[coinIdFor(t.coin)]).netGain, 0);
     const totalFees = trades.reduce((s, t) => s + sumFees(t.fees), 0);
     const totalInvestedOpen = open.reduce((s, t) => s + (Number(t.margin) || 0), 0);
     const holdingsMap = {};
@@ -574,8 +652,8 @@ function Dashboard({ trades, prices, overrides, setOverride, onRefresh, loading,
         var _a;
         const key = t.coin;
         if (!holdingsMap[key])
-            holdingsMap[key] = { coin: key, cost: 0, equity: 0, coinId: COIN_MAP[key] || null };
-        const price = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : (overrides[t.coin] ? Number(overrides[t.coin]) : null);
+            holdingsMap[key] = { coin: key, cost: 0, equity: 0, coinId: coinIdFor(key) || null };
+        const price = (_a = prices[coinIdFor(t.coin)]) !== null && _a !== void 0 ? _a : (overrides[t.coin] ? Number(overrides[t.coin]) : null);
         const c = computeTrade(t, price);
         holdingsMap[key].cost += Number(t.margin) || 0;
         holdingsMap[key].equity += t.margin + c.netGain;
@@ -890,10 +968,12 @@ function PositionForm({ initial, onSave, onCancel }) {
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Coin" },
                 React.createElement(Select, { value: p.coin, onChange: (e) => set("coin", e.target.value) },
-                    COIN_LIST.map((c) => React.createElement("option", { key: c, value: c }, c)),
+                    allCoinSymbols().map((c) => React.createElement("option", { key: c, value: c }, c)),
                     React.createElement("option", { value: "__custom__" }, "Custom / other\u2026"))),
-            isCustom && React.createElement(Field, { label: "Symbol" },
-                React.createElement(TextInput, { placeholder: "e.g. TAO", value: p.customCoin, onChange: (e) => set("customCoin", e.target.value) })),
+            isCustom && (React.createElement(Field, { label: "Symbol", hint: "Search CoinGecko to enable live pricing" },
+                React.createElement("div", { className: "flex flex-col gap-2" },
+                    React.createElement(TextInput, { placeholder: "e.g. TAO", value: p.customCoin, onChange: (e) => set("customCoin", e.target.value) }),
+                    React.createElement(CustomCoinResolver, { symbol: p.customCoin, onResolved: (sym) => { set("coin", sym); set("customCoin", ""); } })))),
             React.createElement(Field, { label: "Margin ($)" },
                 React.createElement(TextInput, { type: "number", step: "any", value: p.margin, onChange: (e) => set("margin", e.target.value) })),
             React.createElement(Field, { label: "Leverage" },
@@ -1009,7 +1089,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     const deletePosition = (id) => setPositions((prev) => prev.filter((p) => p.id !== id));
     const fetchAth = async (p) => {
         var _a, _b;
-        const coinId = COIN_MAP[p.coin];
+        const coinId = coinIdFor(p.coin);
         if (!coinId)
             return;
         setFetchingId(p.id);
@@ -1026,7 +1106,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     const totalMargin = positions.reduce((s, p) => s + p.margin, 0);
     const positionsEquity = positions.reduce((s, p) => {
         var _a;
-        const price = p.delisted ? p.mark : ((_a = prices[COIN_MAP[p.coin]]) !== null && _a !== void 0 ? _a : p.mark);
+        const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
         const pnl = qty * price - notional;
@@ -1073,7 +1153,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
                 " Add position")),
         showForm && React.createElement(PositionForm, { initial: editing, onSave: savePosition, onCancel: () => { setShowForm(false); setEditing(null); } }),
         positions.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
-            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-2" }, positions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[COIN_MAP[p.coin]], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id }))))),
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-2" }, positions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id }))))),
         legacy.length > 0 && (React.createElement(React.Fragment, null,
             React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Legacy / delisted"),
             React.createElement(Panel, { style: { padding: 16 }, className: "flex flex-col gap-2" },
@@ -1216,11 +1296,11 @@ function App() {
     const [fetchError, setFetchError] = useState(null);
     useEffect(() => {
         (async () => {
-            const [t, g, o, led, ledSet, pos, tr, leg, cash] = await Promise.all([
+            const [t, g, o, led, ledSet, pos, tr, leg, cash, custom] = await Promise.all([
                 safeStorageGet("coinfolio_trades"), safeStorageGet("coinfolio_goals"), safeStorageGet("coinfolio_overrides"),
                 safeStorageGet("coinfolio_ledger"), safeStorageGet("coinfolio_ledger_settings"),
                 safeStorageGet("coinfolio_longterm"), safeStorageGet("coinfolio_transfers"), safeStorageGet("coinfolio_legacy"),
-                safeStorageGet("coinfolio_longterm_cash"),
+                safeStorageGet("coinfolio_longterm_cash"), safeStorageGet("coinfolio_custom_coins"),
             ]);
             if (t)
                 setTrades(t);
@@ -1240,6 +1320,8 @@ function App() {
                 setLegacy(leg);
             if (cash !== null && cash !== undefined)
                 setLongTermCash(cash);
+            if (custom)
+                CUSTOM_COINS = custom;
             setReady(true);
         })();
     }, []);
@@ -1263,7 +1345,7 @@ function App() {
         safeStorageSet("coinfolio_longterm_cash", longTermCash); }, [longTermCash, ready]);
     // Fetch every known coin so the Ledger's live-price lookup always has
     // a value ready, regardless of what's currently held elsewhere.
-    const relevantCoinIds = useMemo(() => Array.from(new Set(Object.values(COIN_MAP))), []);
+    const relevantCoinIds = useMemo(() => Array.from(new Set([...Object.values(COIN_MAP), ...Object.values(CUSTOM_COINS)])), [trades, positions, ready]);
     const fetchPrices = useCallback(async () => {
         setLoading(true);
         setFetchError(null);
@@ -1294,7 +1376,7 @@ function App() {
         var _a;
         let finalTrade = { ...t };
         if (isClosed(t)) {
-            const price = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : null;
+            const price = (_a = prices[coinIdFor(t.coin)]) !== null && _a !== void 0 ? _a : null;
             const c = computeTrade(t, price);
             const ledgerEntryData = { type: "trade", date: t.date, coin: t.coin, side: t.side, gain: c.netGain, sourceTradeId: t.id };
             if (t.ledgerEntryId) {
@@ -1328,7 +1410,7 @@ function App() {
     const spotValue = useMemo(() => {
         return openTrades.reduce((sum, t) => {
             var _a;
-            const price = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : (overrides[t.coin] ? Number(overrides[t.coin]) : null);
+            const price = (_a = prices[coinIdFor(t.coin)]) !== null && _a !== void 0 ? _a : (overrides[t.coin] ? Number(overrides[t.coin]) : null);
             const c = computeTrade(t, price);
             return sum + (Number(t.margin) || 0) + c.netGain;
         }, 0);
@@ -1353,7 +1435,7 @@ function App() {
     const longTermValue = useMemo(() => {
         const positionsEquity = positions.reduce((s, p) => {
             var _a;
-            const price = p.delisted ? p.mark : ((_a = prices[COIN_MAP[p.coin]]) !== null && _a !== void 0 ? _a : p.mark);
+            const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
             const notional = p.margin * p.leverage;
             const qty = p.entry ? notional / p.entry : 0;
             const pnl = qty * price - notional;
@@ -1363,7 +1445,7 @@ function App() {
     }, [positions, prices, longTermCash]);
     const legacyTotal = useMemo(() => legacy.reduce((s, l) => s + l.value, 0), [legacy]);
     const netWorth = spotValue + ledgerBalance + longTermValue + legacyTotal;
-    const heldCoins = Array.from(new Set([...openTrades.map((t) => t.coin), ...positions.filter((p) => !p.delisted).map((p) => p.coin)])).filter((c) => COIN_MAP[c]);
+    const heldCoins = Array.from(new Set([...openTrades.map((t) => t.coin), ...positions.filter((p) => !p.delisted).map((p) => p.coin)])).filter((c) => coinIdFor(c));
     const exportCsv = () => {
         const headers = ["coin", "side", "margin", "totalMargin", "entry", "exit", "leverage", "fees", "status", "date", "notes"];
         const rows = trades.map((t) => headers.map((h) => { var _a; return (h === "fees" ? sumFees(t.fees) : ((_a = t[h]) !== null && _a !== void 0 ? _a : "")); }).join(","));
@@ -1486,7 +1568,7 @@ function App() {
                                 "Closed trades (",
                                 closedTrades.length,
                                 ")")),
-                        showClosed && (React.createElement("div", { className: "flex flex-col gap-2" }, closedTrades.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((t) => (React.createElement(OpenTradeRow, { key: t.id, t: t, price: prices[COIN_MAP[t.coin]], onEdit: (tt) => { setEditing(tt); setShowForm(true); }, onDelete: deleteTrade }))))))))),
+                        showClosed && (React.createElement("div", { className: "flex flex-col gap-2" }, closedTrades.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((t) => (React.createElement(OpenTradeRow, { key: t.id, t: t, price: prices[coinIdFor(t.coin)], onEdit: (tt) => { setEditing(tt); setShowForm(true); }, onDelete: deleteTrade }))))))))),
                 tab === "ledger" && React.createElement(LedgerTab, { ledger: ledger, setLedger: setLedger, ledgerSettings: ledgerSettings, setLedgerSettings: setLedgerSettings, onImportHistory: importHistory, hasImported: hasImportedHistory, longTermCash: longTermCash, setLongTermCash: setLongTermCash, prices: prices }),
                 tab === "longterm" && React.createElement(LongTermTab, { positions: positions, setPositions: setPositions, prices: prices, transfers: transfers, setTransfers: setTransfers, ledgerByCoin: ledgerByCoin, ledgerAutoSweep: ledgerAutoSweep, legacy: legacy, setLegacy: setLegacy, onImportHistory: importHistory, hasImported: hasImportedHistory, cash: longTermCash, setCash: setLongTermCash }),
                 tab === "goals" && React.createElement(GoalsTab, { goals: goals, setGoals: setGoals, currentPortfolioValue: netWorth }))),
