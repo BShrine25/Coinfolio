@@ -1370,6 +1370,56 @@ function App() {
         a.click();
         URL.revokeObjectURL(url);
     };
+    // Full backup / restore — every field the app tracks, as one JSON file.
+    // Use this before uploading updated code, or to move data between
+    // Safari and a Home Screen shortcut (which use separate storage on iOS).
+    const fileInputRef = useRef(null);
+    const [importMsg, setImportMsg] = useState(null);
+    const exportAllData = () => {
+        const payload = {
+            version: 1, exportedAt: new Date().toISOString(),
+            trades, ledger, ledgerSettings, positions, transfers, legacy, longTermCash, goals, overrides,
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `coinfolio-backup-${todayStr()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+    const importAllData = (file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const data = JSON.parse(reader.result);
+                if (data.trades)
+                    setTrades(data.trades);
+                if (data.ledger)
+                    setLedger(data.ledger);
+                if (data.ledgerSettings)
+                    setLedgerSettings(data.ledgerSettings);
+                if (data.positions)
+                    setPositions(data.positions);
+                if (data.transfers)
+                    setTransfers(data.transfers);
+                if (data.legacy)
+                    setLegacy(data.legacy);
+                if (data.longTermCash !== undefined)
+                    setLongTermCash(data.longTermCash);
+                if (data.goals)
+                    setGoals(data.goals);
+                if (data.overrides)
+                    setOverrides(data.overrides);
+                setImportMsg({ ok: true, text: "Backup restored." });
+            }
+            catch (e) {
+                setImportMsg({ ok: false, text: "Couldn't read that file — make sure it's a Coinfolio backup JSON." });
+            }
+            setTimeout(() => setImportMsg(null), 4000);
+        };
+        reader.readAsText(file);
+    };
     const tabs = [
         { id: "dashboard", label: "Dashboard", Icon: Wallet },
         { id: "trades", label: "Open Trades", Icon: Activity },
@@ -1380,16 +1430,23 @@ function App() {
     return (React.createElement("div", { className: "min-h-screen w-full flex flex-col", style: { background: C.void } },
         React.createElement("style", null, `${FONT_IMPORT} * { box-sizing: border-box; } input[type=checkbox]{accent-color:${C.accent};}`),
         React.createElement(TickerStrip, { prices: prices, coins: heldCoins, loading: loading }),
-        React.createElement("header", { className: "flex items-center justify-between px-5 py-4 border-b", style: { borderColor: C.hair } },
+        React.createElement("header", { className: "flex items-center justify-between px-5 py-4 border-b flex-wrap gap-2", style: { borderColor: C.hair } },
             React.createElement("div", { className: "flex items-center gap-2.5" },
                 React.createElement("div", { className: "w-7 h-7 rounded-full flex items-center justify-center", style: { background: "#F7931A" } },
                     React.createElement("span", { style: { fontFamily: "Georgia, serif", fontWeight: 700, fontSize: 15, color: "#fff" } }, "\u20BF")),
                 React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 17, fontWeight: 600, color: C.text, letterSpacing: "-0.01em" } },
                     "Coinfolio ",
                     React.createElement("span", { style: { color: C.gold, fontSize: 11, fontWeight: 500 } }, "\u00B7 history loaded"))),
-            React.createElement(Button, { variant: "ghost", onClick: exportCsv },
-                React.createElement(Download, { size: 14 }),
-                " Export CSV")),
+            React.createElement("div", { className: "flex items-center gap-2" },
+                importMsg && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: importMsg.ok ? C.gain : C.loss } }, importMsg.text),
+                React.createElement("input", { ref: fileInputRef, type: "file", accept: "application/json", style: { display: "none" }, onChange: (e) => { if (e.target.files[0])
+                        importAllData(e.target.files[0]); e.target.value = ""; } }),
+                React.createElement(Button, { variant: "ghost", onClick: () => { var _a; return (_a = fileInputRef.current) === null || _a === void 0 ? void 0 : _a.click(); } },
+                    React.createElement(Layers, { size: 14 }),
+                    " Import backup"),
+                React.createElement(Button, { variant: "ghost", onClick: exportAllData },
+                    React.createElement(Download, { size: 14 }),
+                    " Backup"))),
         React.createElement("nav", { className: "flex gap-1 px-5 pt-4 overflow-x-auto" }, tabs.map((tItem) => {
             const Icon = tItem.Icon;
             const active = tab === tItem.id;
@@ -1405,11 +1462,15 @@ function App() {
                     React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.gold } }, fetchError)),
                 tab === "dashboard" && React.createElement(Dashboard, { trades: trades, prices: prices, overrides: overrides, setOverride: setOverride, onRefresh: fetchPrices, loading: loading, updatedAt: updatedAt, ledgerBalance: ledgerBalance, longTermValue: longTermValue }),
                 tab === "trades" && (React.createElement("div", { className: "flex flex-col gap-4" },
-                    React.createElement("div", { className: "flex items-center justify-between" },
+                    React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap" },
                         React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Open trade log"),
-                        !showForm && React.createElement(Button, { variant: "primary", onClick: () => { setEditing(null); setShowForm(true); } },
-                            React.createElement(Plus, { size: 14 }),
-                            " Add trade")),
+                        React.createElement("div", { className: "flex items-center gap-2" },
+                            React.createElement(Button, { variant: "ghost", onClick: exportCsv },
+                                React.createElement(Download, { size: 14 }),
+                                " Export CSV"),
+                            !showForm && React.createElement(Button, { variant: "primary", onClick: () => { setEditing(null); setShowForm(true); } },
+                                React.createElement(Plus, { size: 14 }),
+                                " Add trade"))),
                     showForm && React.createElement(TradeForm, { initial: editing, onSave: saveTrade, onCancel: () => { setShowForm(false); setEditing(null); }, prices: prices }),
                     React.createElement(TradesTable, { trades: openTrades, prices: prices, onEdit: (t) => { setEditing(t); setShowForm(true); }, onDelete: deleteTrade }))),
                 tab === "ledger" && React.createElement(LedgerTab, { ledger: ledger, setLedger: setLedger, ledgerSettings: ledgerSettings, setLedgerSettings: setLedgerSettings, onImportHistory: importHistory, hasImported: hasImportedHistory, longTermCash: longTermCash, setLongTermCash: setLongTermCash, prices: prices }),
