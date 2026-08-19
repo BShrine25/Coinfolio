@@ -4,6 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Coinfolio</title>
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<meta name="apple-mobile-web-app-title" content="Coinfolio">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -1142,30 +1148,12 @@ function GoalsTab({ goals, setGoals, currentPortfolioValue }) {
    APP
 ================================================================= */
 function App() {
-    // Sets the favicon / apple-touch-icon so "Add to Home Screen" picks up
-    // a Bitcoin coin icon instead of a generic page icon.
+    // Title only — the actual favicon / apple-touch-icon are set as static
+    // <link> tags in the page <head>, not injected here. iOS's "Add to
+    // Home Screen" needs a real PNG present at load time, not a
+    // JS-injected data-URI SVG, or it silently falls back to a screenshot.
     useEffect(() => {
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#F7931A"/><text x="50" y="70" font-family="Georgia, serif" font-size="62" font-weight="700" fill="#ffffff" text-anchor="middle">\u20BF</text></svg>`;
-        const dataUri = `data:image/svg+xml,${encodeURIComponent(svg)}`;
-        const setLink = (rel) => {
-            let link = document.querySelector(`link[rel="${rel}"]`);
-            if (!link) {
-                link = document.createElement("link");
-                link.rel = rel;
-                document.head.appendChild(link);
-            }
-            link.href = dataUri;
-        };
-        setLink("icon");
-        setLink("apple-touch-icon");
         document.title = "Coinfolio · history loaded";
-        let meta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-        if (!meta) {
-            meta = document.createElement("meta");
-            meta.name = "apple-mobile-web-app-title";
-            document.head.appendChild(meta);
-        }
-        meta.content = "Coinfolio";
     }, []);
     const [tab, setTab] = useState("dashboard");
     const [trades, setTrades] = useState([]);
