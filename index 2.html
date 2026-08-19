@@ -1,0 +1,1391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Coinfolio</title>
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<meta name="apple-mobile-web-app-title" content="Coinfolio">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;background:#0A0C10;}
+  * { box-sizing: border-box; }
+  input[type=checkbox]{accent-color:#4C7EFF;}
+  ::-webkit-scrollbar{height:8px;width:8px;}
+  ::-webkit-scrollbar-thumb{background:#232936;border-radius:4px;}
+  .ticker-track { width: max-content; animation: ticker-scroll 40s linear infinite; }
+  @media (prefers-reduced-motion: reduce) { .ticker-track { animation: none; } }
+  @keyframes ticker-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 1s linear infinite; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+/* ---------------------------------------------------------------
+   Icons — hand-rolled SVGs (standalone build has no bundler to
+   resolve the lucide-react npm package)
+---------------------------------------------------------------- */
+const Icon = ({ path, size = 14, color = "currentColor", className = "" }) => (React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", className: className },
+    React.createElement("path", { d: path })));
+const Plus = (p) => React.createElement(Icon, { ...p, path: "M12 5v14M5 12h14" });
+const Trash2 = (p) => React.createElement(Icon, { ...p, path: "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0l-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6h16z" });
+const RefreshCw = (p) => React.createElement(Icon, { ...p, path: "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" });
+const X = (p) => React.createElement(Icon, { ...p, path: "M18 6L6 18M6 6l12 12" });
+const Target = (p) => React.createElement(Icon, { ...p, path: "M12 22a10 10 0 100-20 10 10 0 000 20zM12 18a6 6 0 100-12 6 6 0 000 12zM12 14a2 2 0 100-4 2 2 0 000 4z" });
+const Wallet = (p) => React.createElement(Icon, { ...p, path: "M21 12V7H5a2 2 0 010-4h14v4M3 5v14a2 2 0 002 2h16v-5M18 12a2 2 0 000 4h4v-4h-4z" });
+const Activity = (p) => React.createElement(Icon, { ...p, path: "M22 12h-4l-3 9L9 3l-3 9H2" });
+const Download = (p) => React.createElement(Icon, { ...p, path: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" });
+const Pencil = (p) => React.createElement(Icon, { ...p, path: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" });
+const Check = (p) => React.createElement(Icon, { ...p, path: "M20 6L9 17l-5-5" });
+const AlertCircle = (p) => React.createElement(Icon, { ...p, path: "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01" });
+const Layers = (p) => React.createElement(Icon, { ...p, path: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" });
+const ArrowUpDown = (p) => React.createElement(Icon, { ...p, path: "M7 17V3M3 7l4-4 4 4M17 7v14M21 17l-4 4-4-4" });
+const DollarSign = (p) => React.createElement(Icon, { ...p, path: "M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" });
+const Zap = (p) => React.createElement(Icon, { ...p, path: "M13 2L3 14h9l-1 8 10-12h-9l1-8z" });
+const ChevronRight = (p) => React.createElement(Icon, { ...p, path: "M9 18l6-6-6-6" });
+/* ---------------------------------------------------------------
+   THEME
+---------------------------------------------------------------- */
+const C = {
+    void: "#0A0C10", panel: "#12151C", panelRaised: "#171B24",
+    hair: "#232936", hair2: "#2C3341", text: "#E7EAEF", muted: "#8890A0",
+    faint: "#565E6E", accent: "#4C7EFF", accentDim: "#4C7EFF33",
+    gold: "#F0B848", goldDim: "#F0B84822",
+    gain: "#33D191", gainDim: "#33D19122",
+    loss: "#F2596B", lossDim: "#F2596B22",
+    violet: "#9B8CFF", violetDim: "#9B8CFF22",
+};
+const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap');`;
+/* ---------------------------------------------------------------
+   Coin map
+---------------------------------------------------------------- */
+const COIN_MAP = {
+    BTC: "bitcoin", ETH: "ethereum", SOL: "solana", BNB: "binancecoin", XRP: "ripple",
+    ADA: "cardano", DOGE: "dogecoin", AVAX: "avalanche-2", DOT: "polkadot", MATIC: "matic-network",
+    LINK: "chainlink", LTC: "litecoin", UNI: "uniswap", ATOM: "cosmos", ETC: "ethereum-classic",
+    XLM: "stellar", NEAR: "near", APT: "aptos", ARB: "arbitrum", OP: "optimism",
+    FIL: "filecoin", ICP: "internet-computer", HBAR: "hedera-hashgraph", VET: "vechain", SUI: "sui",
+    INJ: "injective-protocol", TIA: "celestia", SEI: "sei-network", RUNE: "thorchain", AAVE: "aave",
+    MKR: "maker", SNX: "havven", GRT: "the-graph", SAND: "the-sandbox", MANA: "decentraland",
+    APE: "apecoin", SHIB: "shiba-inu", PEPE: "pepe", WIF: "dogwifcoin", BONK: "bonk",
+    TON: "the-open-network", TRX: "tron", USDT: "tether", USDC: "usd-coin", XMR: "monero",
+};
+const COIN_LIST = Object.keys(COIN_MAP).sort();
+/* ---------------------------------------------------------------
+   Imported history — extracted from the user's "Full Port, .5 Pull",
+   "Full Details", and "Long Term Port" sheets. Trade order and dates
+   are verified exact (color-block day grouping, zero mismatches
+   across all 55 real trading days). Coin/side available for the
+   first 98 of 111 trades (Full Details stops being filled in after
+   that point). Deposits detected directly from Start-column formulas.
+---------------------------------------------------------------- */
+const HISTORICAL_LEDGER = [
+    { type: "deposit", date: "2026-06-24", depositAmount: 384.6978 },
+    { type: "trade", date: "2026-06-24", coin: "BTC", side: "long", gain: 16.8367 },
+    { type: "trade", date: "2026-06-24", coin: "POL", side: "long", gain: 12.1601 },
+    { type: "trade", date: "2026-06-24", coin: "ZETA", side: "long", gain: 7.2715 },
+    { type: "deposit", date: "2026-06-25", depositAmount: 602.05167 },
+    { type: "trade", date: "2026-06-25", coin: "POL", side: "long", gain: 12.2769 },
+    { type: "trade", date: "2026-06-26", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-06-27", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-06-28", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-06-29", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-06-30", coin: "ETH", side: "long", gain: -5.0085 },
+    { type: "trade", date: "2026-07-01", coin: "TAO", side: "long", gain: 10.7457 },
+    { type: "trade", date: "2026-07-02", coin: "LINK", side: "long", gain: 13.1587 },
+    { type: "trade", date: "2026-07-02", coin: "COMP", side: "long", gain: 5.7618 },
+    { type: "trade", date: "2026-07-03", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-07-04", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-07-05", coin: "SEI", side: "long", gain: 13.9619 },
+    { type: "trade", date: "2026-07-05", coin: "POL", side: "long", gain: 28.4561 },
+    { type: "trade", date: "2026-07-05", coin: "BCH", side: "short", gain: 23.3107 },
+    { type: "trade", date: "2026-07-06", coin: "ETH", side: "short", gain: 11.6751 },
+    { type: "trade", date: "2026-07-07", coin: "ETH", side: "short", gain: 45.5916 },
+    { type: "trade", date: "2026-07-08", coin: "TIA", side: "long", gain: 8.8345 },
+    { type: "trade", date: "2026-07-08", coin: "MANA", side: "long", gain: 8.5885 },
+    { type: "trade", date: "2026-07-08", coin: "IMX", side: "long", gain: 18.1984 },
+    { type: "trade", date: "2026-07-08", coin: "ICP", side: "long", gain: 1.0835 },
+    { type: "trade", date: "2026-07-08", coin: "CRV", side: "long", gain: 0.1884 },
+    { type: "trade", date: "2026-07-08", coin: "COMP", side: "long", gain: 5.5686 },
+    { type: "trade", date: "2026-07-08", coin: "AAVE", side: "long", gain: 19.1043 },
+    { type: "deposit", date: "2026-07-09", depositAmount: 398.9994 },
+    { type: "trade", date: "2026-07-09", coin: "FARTCOIN", side: "long", gain: 31.5453 },
+    { type: "trade", date: "2026-07-10", coin: "ETH", side: "long", gain: 9.1888 },
+    { type: "trade", date: "2026-07-11", coin: "ADA", side: "long", gain: 92.7741 },
+    { type: "trade", date: "2026-07-11", coin: "ETH", side: "short", gain: 35.7708 },
+    { type: "trade", date: "2026-07-12", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-07-13", coin: "AAVE", side: "long", gain: 10.8829 },
+    { type: "trade", date: "2026-07-13", coin: "CRV", side: "long", gain: 0.3972 },
+    { type: "trade", date: "2026-07-13", coin: "LINK", side: "long", gain: 1.4399 },
+    { type: "trade", date: "2026-07-13", coin: "ONDO", side: "long", gain: 0.4568 },
+    { type: "trade", date: "2026-07-13", coin: "POL", side: "long", gain: 3.9986 },
+    { type: "trade", date: "2026-07-13", coin: "SUI", side: "long", gain: 8.8961 },
+    { type: "trade", date: "2026-07-13", coin: "TAO", side: "long", gain: 0.8604 },
+    { type: "trade", date: "2026-07-13", coin: "TIA", side: "long", gain: 0.2414 },
+    { type: "trade", date: "2026-07-13", coin: "NEAR", side: "long", gain: 14.3059 },
+    { type: "trade", date: "2026-07-13", coin: "ALCH", side: "long", gain: -78.5814 },
+    { type: "trade", date: "2026-07-14", coin: "APT", side: "long", gain: -1.4432 },
+    { type: "trade", date: "2026-07-14", coin: "XRP", side: "long", gain: 9.7992 },
+    { type: "trade", date: "2026-07-15", coin: "ADA", side: "long", gain: 91.1704 },
+    { type: "trade", date: "2026-07-15", coin: "CRV", side: "short", gain: 22.8917 },
+    { type: "trade", date: "2026-07-15", coin: "TAO", side: "long", gain: 94.3711 },
+    { type: "trade", date: "2026-07-16", coin: "TAO", side: "long", gain: 43.744 },
+    { type: "trade", date: "2026-07-17", coin: "ONDO", side: "long", gain: 10.6727 },
+    { type: "trade", date: "2026-07-18", coin: "ADA", side: "long", gain: 1.0176 },
+    { type: "trade", date: "2026-07-18", coin: "COMP", side: "long", gain: 1.0592 },
+    { type: "trade", date: "2026-07-18", coin: "ALCH", side: "long", gain: 14.7436 },
+    { type: "trade", date: "2026-07-19", coin: "TAO", side: "long", gain: 55.7357 },
+    { type: "trade", date: "2026-07-20", coin: "TIA", side: "long", gain: 1.602 },
+    { type: "trade", date: "2026-07-20", coin: "COMP", side: "long", gain: 15.3996 },
+    { type: "trade", date: "2026-07-20", coin: "ETH", side: "long", gain: 15.8403 },
+    { type: "trade", date: "2026-07-21", coin: "ADA", side: "long", gain: 5.5807 },
+    { type: "trade", date: "2026-07-21", coin: "LINK", side: "long", gain: 1.389 },
+    { type: "trade", date: "2026-07-21", coin: "ONDO", side: "long", gain: 8.6887 },
+    { type: "trade", date: "2026-07-21", coin: "SUI", side: "long", gain: 2.5921 },
+    { type: "trade", date: "2026-07-21", coin: "PUMP", side: "short", gain: 38.3092 },
+    { type: "trade", date: "2026-07-22", coin: "MANA", side: "long", gain: -22.5532 },
+    { type: "deposit", date: "2026-07-23", depositAmount: 598.55892 },
+    { type: "trade", date: "2026-07-23", coin: "NEAR", side: "long", gain: 70.9733 },
+    { type: "trade", date: "2026-07-23", coin: "NEAR", side: "long", gain: 64.043 },
+    { type: "trade", date: "2026-07-24", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-07-25", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-07-26", coin: "TAO", side: "long", gain: 150.2571 },
+    { type: "trade", date: "2026-07-27", coin: "AAVE", side: "long", gain: 6.4226 },
+    { type: "trade", date: "2026-07-27", coin: "AVAX", side: "long", gain: 8.3147 },
+    { type: "trade", date: "2026-07-27", coin: "ONDO", side: "long", gain: 5.144 },
+    { type: "trade", date: "2026-07-28", coin: "CRV", side: "long", gain: 1.3233 },
+    { type: "trade", date: "2026-07-28", coin: "HBAR", side: "long", gain: 50.9626 },
+    { type: "trade", date: "2026-07-29", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-07-30", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-07-31", coin: "ALCH", side: "long", gain: 10.7984 },
+    { type: "trade", date: "2026-07-31", coin: "ADA", side: "long", gain: 0.3433 },
+    { type: "trade", date: "2026-07-31", coin: "HBAR", side: "long", gain: -0.7037 },
+    { type: "trade", date: "2026-08-01", coin: "IMX", side: "long", gain: 4.8899 },
+    { type: "trade", date: "2026-08-02", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-08-03", coin: "ALGO", side: "long", gain: 1.8078 },
+    { type: "trade", date: "2026-08-03", coin: "POPCAT", side: "long", gain: 4.1415 },
+    { type: "trade", date: "2026-08-04", coin: "TAO", side: "long", gain: 3.2212 },
+    { type: "trade", date: "2026-08-05", coin: "COMP", side: "long", gain: 8.621 },
+    { type: "trade", date: "2026-08-05", coin: "PYTH", side: "long", gain: 10.5877 },
+    { type: "deposit", date: "2026-08-06", depositAmount: 498.7991 },
+    { type: "trade", date: "2026-08-06", coin: "ETH", side: "long", gain: 4.1652 },
+    { type: "trade", date: "2026-08-06", coin: "ALGO", side: "long", gain: -0.0272 },
+    { type: "trade", date: "2026-08-06", coin: "AAVE", side: "long", gain: 2.8436 },
+    { type: "trade", date: "2026-08-07", coin: "ETH", side: "long", gain: 1.4426 },
+    { type: "trade", date: "2026-08-07", coin: "TAO", side: "long", gain: 2.8567 },
+    { type: "trade", date: "2026-08-07", coin: "AVAX", side: "long", gain: 1.0535 },
+    { type: "trade", date: "2026-08-08", coin: "CRV", side: "long", gain: 11.0162 },
+    { type: "trade", date: "2026-08-08", coin: "HBAR", side: "long", gain: 0.7605 },
+    { type: "trade", date: "2026-08-08", coin: "ATOM", side: "long", gain: 0.4521 },
+    { type: "trade", date: "2026-08-09", coin: "ICP", side: "long", gain: 0.4352 },
+    { type: "trade", date: "2026-08-09", coin: "POL", side: "long", gain: -0.4681 },
+    { type: "trade", date: "2026-08-09", coin: "AXS", side: "long", gain: -3.8119 },
+    { type: "trade", date: "2026-08-09", coin: "ALCH", side: "long", gain: 1.8856 },
+    { type: "trade", date: "2026-08-10", coin: "", side: "long", gain: 0 },
+    { type: "trade", date: "2026-08-11", coin: "LINK", side: "long", gain: 3.7009 },
+    { type: "trade", date: "2026-08-12", coin: "ETH", side: "long", gain: 89.1481 },
+    { type: "trade", date: "2026-08-12", coin: "INJ", side: "long", gain: -319.5991 },
+    { type: "trade", date: "2026-08-12", coin: "MANA", side: "long", gain: -5.2742 },
+    { type: "trade", date: "2026-08-13", coin: "ETH", side: "long", gain: 69.2084 },
+    { type: "trade", date: "2026-08-13", coin: "UNI", side: "long", gain: 141.8534 },
+    { type: "trade", date: "2026-08-14", coin: "NEAR", side: "long", gain: 20.4091 },
+    { type: "trade", date: "2026-08-14", coin: "SUI", side: "long", gain: 33.0253 },
+    { type: "trade", date: "2026-08-15", coin: "RENDER", side: "long", gain: -3.3471 },
+    { type: "trade", date: "2026-08-16", coin: "TIA", side: "long", gain: 21.7822 },
+    { type: "trade", date: "2026-08-16", coin: "ONDO", side: "long", gain: 81.167 },
+    { type: "trade", date: "2026-08-16", coin: "NEAR", side: "long", gain: 60.2769 },
+    { type: "trade", date: "2026-08-16", coin: "SUI", side: "long", gain: 70.947 },
+    { type: "trade", date: "2026-08-17", coin: "HBAR", side: "long", gain: 14.1123 }
+];
+const HISTORICAL_POSITIONS = [
+    { coin: "AAVE", margin: 101.4254, leverage: 3, entry: 86.78, mark: 86.86, liquidation: 58.43, ath: 661.69 },
+    { coin: "ADA", margin: 175.3568, leverage: 3, entry: 0.1948, mark: 0.1807, liquidation: 0.1313, ath: 3.09 },
+    { coin: "ALGO", margin: 100.4933, leverage: 3, entry: 0.0798, mark: 0.0798, liquidation: 0.0537, ath: 3.56 },
+    { coin: "ATOM", margin: 50.1718, leverage: 3, entry: 1.499, mark: 1.499, liquidation: 1.009, ath: 43.84 },
+    { coin: "AVAX", margin: 50.0501, leverage: 3, entry: 6.783, mark: 6.773, liquidation: 4.567, ath: 144.96 },
+    { coin: "BTC", margin: 63.1232, leverage: 3, entry: 63047.6, mark: 63048.4, liquidation: 42243.1, ath: 126080 },
+    { coin: "ETH", margin: 201.0185, leverage: 3, entry: 1882.29, mark: 1882.46, liquidation: 1261.17, ath: 4946.05 },
+    { coin: "HBAR", margin: 50.0547, leverage: 3, entry: 0.06607, mark: 0.06608, liquidation: 0.04449, ath: 0.5692 },
+    { coin: "LINK", margin: 150.1796, leverage: 3, entry: 9.601, mark: 9.6, liquidation: 6.465, ath: 52.7 },
+    { coin: "NEAR", margin: 99.8504, leverage: 3, entry: 1.65, mark: 1.65, liquidation: 1.111, ath: 20.44 },
+    { coin: "ONDO", margin: 175.0631, leverage: 3, entry: 0.3507, mark: 0.3303, liquidation: 0.2362, ath: 2.14 },
+    { coin: "SUI", margin: 200.2066, leverage: 3, entry: 0.6856, mark: 0.6856, liquidation: 0.4617, ath: 5.35 },
+    { coin: "TAO", margin: 199.6216, leverage: 3, entry: 198.72, mark: 198.83, liquidation: 133.81, ath: 757.6 },
+    { coin: "UNI", margin: 50.0538, leverage: 3, entry: 3.279, mark: 3.279, liquidation: 2.209, ath: 44.92 },
+    { coin: "XRP", margin: 150.1755, leverage: 3, entry: 1.0614, mark: 1.0045, liquidation: 0.715, ath: 3.65 },
+];
+// The "green box" — delisted coins folded into a formula tail with no
+// coin name recoverable from the file, just their final $ contribution.
+const HISTORICAL_LEGACY = [27.7892, 23.0883, 4.1415, -51.1538, -3.8119, 35.8168, 1.5187, -319.5991, -19.3095, 56.4236, 32.4601];
+/* ---------------------------------------------------------------
+   Generic helpers
+---------------------------------------------------------------- */
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const fmtUsd = (n, opts = {}) => {
+    var _a;
+    if (n === null || n === undefined || Number.isNaN(n))
+        return "—";
+    const abs = Math.abs(n);
+    const digits = (_a = opts.digits) !== null && _a !== void 0 ? _a : (abs > 0 && abs < 1 ? 4 : 2);
+    return (n < 0 ? "-$" : "$") + abs.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+};
+const fmtPct = (n) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : (n > 0 ? "+" : "") + n.toFixed(2) + "%";
+const fmtQty = (n) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : n.toLocaleString(undefined, { maximumFractionDigits: 6 });
+function isClosed(t) { return t.status === "closed"; }
+// Open Trades share the margin/entry/exit/leverage model with the Ledger,
+// plus fees (which the Ledger doesn't track — fees get netted in before
+// the auto-synced Ledger entry is created).
+function computeTrade(t, livePrice) {
+    const margin = Number(t.margin) || 0;
+    const leverage = Number(t.leverage) || 1;
+    const entry = Number(t.entry) || 0;
+    const fees = Number(t.fees) || 0;
+    const notional = margin * leverage;
+    const qty = entry ? notional / entry : 0;
+    const closed = isClosed(t);
+    const price = closed ? (Number(t.exit) || 0) : (livePrice !== null && livePrice !== void 0 ? livePrice : (Number(t.exit) || 0));
+    const currentValue = qty * price;
+    const raw = t.side === "short" ? notional - currentValue : currentValue - notional;
+    const netGain = raw - fees;
+    const netPayout = margin + netGain;
+    const pnlPct = margin !== 0 ? (netGain / margin) * 100 : 0;
+    return { closed, notional, qty, currentValue, netGain, netPayout, pnlPct };
+}
+/* ---------------------------------------------------------------
+   Ledger helpers — date grouping + pace-to-goal
+---------------------------------------------------------------- */
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function getISOWeekKey(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+    const yearStart = new Date(d.getFullYear(), 0, 1);
+    const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    return `${d.getFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+const getMonthKey = (dateStr) => dateStr.slice(0, 7);
+const getWeekdayName = (dateStr) => WEEKDAYS[new Date(dateStr + "T00:00:00").getDay()];
+// Ledger rule (confirmed): half of every trade's gain compounds back into
+// the active balance, half sweeps to the Long-Term portfolio. Deposits are
+// added in full. pullFraction is editable (default 50%).
+function ledgerDelta(entry, pullFraction) {
+    const amount = entry.type === "deposit" ? entry.depositAmount : entry.gain;
+    return amount * (1 - (pullFraction !== null && pullFraction !== void 0 ? pullFraction : 50) / 100);
+}
+function ledgerSweep(entry, pullFraction) {
+    const amount = entry.type === "deposit" ? entry.depositAmount : entry.gain;
+    return amount * ((pullFraction !== null && pullFraction !== void 0 ? pullFraction : 50) / 100);
+}
+function groupSum(entries, keyFn) {
+    const map = {};
+    entries.forEach((e) => {
+        const k = keyFn(e);
+        if (!map[k])
+            map[k] = { key: k, total: 0, wins: 0, losses: 0, count: 0 };
+        map[k].total += e.gain;
+        map[k].count += 1;
+        if (e.gain > 0)
+            map[k].wins += 1;
+        else if (e.gain < 0)
+            map[k].losses += 1;
+    });
+    return Object.values(map);
+}
+function paceToGoal({ initialBalance, currentBalance, target, positionPct, leverage, targetGainPct, pullFraction, tradesMade, firstDate }) {
+    const multiplier = 1 + (positionPct / 100) * leverage * (targetGainPct / 100) * (1 - (pullFraction || 0) / 100);
+    if (!(multiplier > 1) || !(initialBalance > 0) || !(currentBalance > 0) || !(target > initialBalance))
+        return null;
+    const totalTradesFromStart = Math.ceil(Math.log(target / initialBalance) / Math.log(multiplier));
+    const remainingPlanned = totalTradesFromStart - tradesMade;
+    const tradesNeededNow = currentBalance >= target ? 0 : Math.ceil(Math.log(target / currentBalance) / Math.log(multiplier));
+    const tradesBehind = tradesNeededNow - Math.max(remainingPlanned, 0);
+    const perfectBalanceAtTradeCount = initialBalance * Math.pow(multiplier, tradesMade);
+    const dollarGap = perfectBalanceAtTradeCount - currentBalance;
+    const pctGap = perfectBalanceAtTradeCount !== 0 ? (dollarGap / perfectBalanceAtTradeCount) * 100 : 0;
+    const daysSinceStart = firstDate ? Math.max(1, (Date.now() - new Date(firstDate + "T00:00:00").getTime()) / 86400000) : null;
+    const tradesPerDay = daysSinceStart && tradesMade > 0 ? tradesMade / daysSinceStart : null;
+    const daysToGoal = tradesPerDay ? tradesNeededNow / tradesPerDay : null;
+    const etaDate = daysToGoal !== null ? new Date(Date.now() + daysToGoal * 86400000) : null;
+    return { multiplier, totalTradesFromStart, remainingPlanned, tradesNeededNow, tradesBehind, dollarGap, pctGap, tradesPerDay, etaDate };
+}
+/* ---------------------------------------------------------------
+   Storage
+---------------------------------------------------------------- */
+async function safeStorageGet(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+    }
+    catch (e) {
+        return null;
+    }
+}
+async function safeStorageSet(key, value) {
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+    }
+    catch (e) { }
+}
+/* ---------------------------------------------------------------
+   UI atoms
+---------------------------------------------------------------- */
+function Panel({ children, style, className = "" }) {
+    return React.createElement("div", { className: "rounded-md " + className, style: { background: C.panel, border: `1px solid ${C.hair}`, ...style } }, children);
+}
+function Field({ label, children, hint, className = "" }) {
+    return (React.createElement("label", { className: "flex flex-col gap-1.5 " + className },
+        React.createElement("span", { style: { color: C.muted, fontFamily: "Inter", fontSize: 11, letterSpacing: "0.04em" }, className: "uppercase font-medium" }, label),
+        children,
+        hint && React.createElement("span", { style: { color: C.faint, fontSize: 11 } }, hint)));
+}
+const inputStyle = { background: C.panelRaised, border: `1px solid ${C.hair2}`, color: C.text, fontFamily: "JetBrains Mono", fontSize: 13 };
+function TextInput(props) {
+    return React.createElement("input", { ...props, className: "rounded px-2.5 py-2 outline-none " + (props.className || ""), style: { ...inputStyle, ...props.style } });
+}
+function Select(props) {
+    return React.createElement("select", { ...props, className: "rounded px-2.5 py-2 outline-none " + (props.className || ""), style: { ...inputStyle, ...props.style } }, props.children);
+}
+function Button({ children, variant = "primary", className = "", ...rest }) {
+    const styles = {
+        primary: { background: C.accent, color: "#fff", border: `1px solid ${C.accent}` },
+        ghost: { background: "transparent", color: C.text, border: `1px solid ${C.hair2}` },
+        danger: { background: "transparent", color: C.loss, border: `1px solid ${C.loss}55` },
+        gold: { background: C.gold, color: "#1A1200", border: `1px solid ${C.gold}` },
+        violet: { background: C.violet, color: "#140F2E", border: `1px solid ${C.violet}` },
+    };
+    return (React.createElement("button", { ...rest, className: "rounded px-3 py-2 text-sm font-medium inline-flex items-center gap-1.5 transition-opacity hover:opacity-85 disabled:opacity-40 " + className, style: { ...styles[variant], fontFamily: "Inter" } }, children));
+}
+function Badge({ children, tone = "muted" }) {
+    const tones = { muted: { color: C.muted, background: "#8890A022" }, gain: { color: C.gain, background: C.gainDim }, loss: { color: C.loss, background: C.lossDim }, gold: { color: C.gold, background: C.goldDim }, violet: { color: C.violet, background: C.violetDim } };
+    return React.createElement("span", { className: "px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wide", style: { ...tones[tone], fontFamily: "Inter" } }, children);
+}
+function SummaryCard({ label, value, sub, tone }) {
+    const color = tone === "gain" ? C.gain : tone === "loss" ? C.loss : C.text;
+    return (React.createElement(Panel, { style: { padding: 16 }, className: "flex flex-col gap-1.5" },
+        React.createElement("span", { style: { color: C.muted, fontFamily: "Inter", fontSize: 11, letterSpacing: "0.04em" }, className: "uppercase font-medium" }, label),
+        React.createElement("span", { style: { color, fontFamily: "JetBrains Mono", fontSize: 22, fontWeight: 600, lineHeight: 1.1 } }, value),
+        sub && React.createElement("span", { style: { color: C.faint, fontFamily: "Inter", fontSize: 12 } }, sub)));
+}
+/* ---------------------------------------------------------------
+   Ticker strip
+---------------------------------------------------------------- */
+function TickerStrip({ prices, coins, loading }) {
+    const list = coins.length ? coins : ["BTC", "ETH", "SOL", "BNB", "XRP"];
+    const items = list.map((sym) => ({ sym, price: prices[COIN_MAP[sym]] }));
+    const doubled = [...items, ...items];
+    return (React.createElement("div", { className: "w-full overflow-hidden border-b", style: { borderColor: C.hair, background: C.void } },
+        React.createElement("div", { className: "flex items-center gap-8 py-2 ticker-track" }, doubled.map((it, i) => (React.createElement("div", { key: i, className: "flex items-center gap-2 shrink-0 px-2" },
+            React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.muted } }, it.sym),
+            React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.text } }, it.price ? fmtUsd(it.price) : loading ? "…" : "—"))))),
+        React.createElement("style", null, `.ticker-track{width:max-content;animation:ticker-scroll 40s linear infinite;} @media (prefers-reduced-motion: reduce){.ticker-track{animation:none;}} @keyframes ticker-scroll{from{transform:translateX(0);}to{transform:translateX(-50%);}}`)));
+}
+/* =================================================================
+   SPOT TRADES (generic buy/sell log)
+================================================================= */
+const emptyTrade = () => ({ id: null, coin: "BTC", side: "long", margin: "", entry: "", exit: "", leverage: "10", fees: "", status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
+function TradeForm({ initial, onSave, onCancel, prices }) {
+    var _a;
+    const [t, setT] = useState(initial || emptyTrade());
+    const [manualExit, setManualExit] = useState(!!initial);
+    const set = (k, v) => setT((p) => ({ ...p, [k]: v }));
+    const livePrice = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : null;
+    useEffect(() => {
+        if (livePrice && !manualExit)
+            set("exit", livePrice);
+    }, [livePrice, t.coin]); // eslint-disable-line
+    const preview = computeTrade({ ...t, margin: t.margin || 0, entry: t.entry || 0, exit: t.exit || 0, fees: t.fees || 0, leverage: t.leverage || 1 }, livePrice);
+    const submit = () => {
+        if (!t.margin || Number(t.margin) <= 0 || !t.entry)
+            return;
+        onSave({
+            ...t, id: t.id || uid(),
+            margin: Number(t.margin), entry: Number(t.entry), exit: t.exit === "" ? 0 : Number(t.exit),
+            leverage: Number(t.leverage) || 1, fees: Number(t.fees) || 0,
+        });
+    };
+    return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(Field, { label: "Coin" },
+                React.createElement(Select, { value: t.coin, onChange: (e) => { set("coin", e.target.value); setManualExit(false); } }, COIN_LIST.map((c) => React.createElement("option", { key: c, value: c }, c)))),
+            React.createElement(Field, { label: "Side", hint: "Short flips the P&L direction" },
+                React.createElement(Select, { value: t.side, onChange: (e) => set("side", e.target.value) },
+                    React.createElement("option", { value: "long" }, "Long"),
+                    React.createElement("option", { value: "short" }, "Short"))),
+            React.createElement(Field, { label: "Margin ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.margin, onChange: (e) => set("margin", e.target.value) })),
+            React.createElement(Field, { label: "Leverage" },
+                React.createElement(TextInput, { type: "number", min: "1", step: "0.1", value: t.leverage, onChange: (e) => set("leverage", e.target.value) }))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(Field, { label: "Entry price ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.entry, onChange: (e) => set("entry", e.target.value) })),
+            React.createElement(Field, { label: "Current / close price ($)", hint: livePrice ? "Live — edit to lock in your exit" : "No live feed, enter manually" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.exit, onChange: (e) => { setManualExit(true); set("exit", e.target.value); } })),
+            React.createElement(Field, { label: "Fees ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.fees, onChange: (e) => set("fees", e.target.value) })),
+            React.createElement(Field, { label: "Status" },
+                React.createElement(Select, { value: t.status, onChange: (e) => set("status", e.target.value) },
+                    React.createElement("option", { value: "open" }, "Open"),
+                    React.createElement("option", { value: "closed" }, "Closed")))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(Field, { label: "Date" },
+                React.createElement(TextInput, { type: "date", value: t.date, onChange: (e) => set("date", e.target.value) })),
+            React.createElement(Field, { label: "Notes", className: "md:col-span-3" },
+                React.createElement(TextInput, { placeholder: "Optional", value: t.notes, onChange: (e) => set("notes", e.target.value) }))),
+        React.createElement("div", { className: "flex items-center gap-4 px-3 py-2 rounded flex-wrap", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+            React.createElement("span", { style: { color: C.muted, fontSize: 12, fontFamily: "Inter" } }, t.status === "closed" ? "Net payout" : "Unrealized value"),
+            React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 14, color: preview.netGain >= 0 ? C.gain : C.loss, fontWeight: 600 } }, fmtUsd(preview.netPayout)),
+            React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: preview.netGain >= 0 ? C.gain : C.loss } },
+                "(",
+                fmtPct(preview.pnlPct),
+                ")"),
+            t.status === "closed" && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.violet } }, "\u2192 syncs to Ledger automatically")),
+        React.createElement("div", { className: "flex gap-2 justify-end pt-1" },
+            React.createElement(Button, { variant: "ghost", onClick: onCancel },
+                React.createElement(X, { size: 14 }),
+                " Cancel"),
+            React.createElement(Button, { variant: "primary", onClick: submit },
+                React.createElement(Check, { size: 14 }),
+                " Save trade"))));
+}
+function OpenTradeRow({ t, price, onEdit, onDelete }) {
+    const [expanded, setExpanded] = useState(false);
+    const c = computeTrade(t, price);
+    const currentPrice = price !== null && price !== void 0 ? price : (Number(t.exit) || 0);
+    const upDown = c.netGain;
+    const color = upDown >= 0 ? C.gain : C.loss;
+    return (React.createElement(Panel, { style: { overflow: "hidden" } },
+        React.createElement("button", { onClick: () => setExpanded((v) => !v), className: "w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.02]", style: { background: "transparent", border: "none", cursor: "pointer" } },
+            React.createElement("div", { className: "flex items-center gap-2.5 flex-wrap" },
+                React.createElement(ChevronRight, { size: 14, color: C.faint, style: { transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }),
+                React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 14, fontWeight: 700, color: C.text } }, t.coin),
+                React.createElement(Badge, { tone: t.side === "short" ? "loss" : "muted" }, t.side)),
+            React.createElement("div", { className: "flex items-center gap-4", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
+                React.createElement("span", { style: { color: C.faint }, className: "hidden sm:inline" },
+                    "Entry ",
+                    fmtUsd(Number(t.entry)),
+                    " \u2192 ",
+                    fmtUsd(currentPrice)),
+                React.createElement("span", { style: { color, fontWeight: 600 } }, fmtUsd(upDown)))),
+        expanded && (React.createElement("div", { className: "flex flex-col gap-3 px-4 pb-4", style: { borderTop: `1px solid ${C.hair}` } },
+            React.createElement("div", { className: "flex justify-end gap-2 pt-3" },
+                React.createElement(Button, { variant: "ghost", onClick: () => onEdit(t) },
+                    React.createElement(Pencil, { size: 13 }),
+                    " Edit / Close"),
+                React.createElement(Button, { variant: "danger", onClick: () => onDelete(t.id) },
+                    React.createElement(Trash2, { size: 13 }),
+                    " Delete")),
+            React.createElement("div", { className: "grid grid-cols-2 gap-x-4 gap-y-1.5", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
+                React.createElement("span", { style: { color: C.faint } }, "Margin"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(Number(t.margin))),
+                React.createElement("span", { style: { color: C.faint } }, "Leverage"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } },
+                    t.leverage,
+                    "x"),
+                React.createElement("span", { style: { color: C.faint } }, "Notional"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(c.notional)),
+                React.createElement("span", { style: { color: C.faint } }, "Fees"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(Number(t.fees) || 0)),
+                React.createElement("span", { style: { color: C.faint } }, "Current value"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(c.currentValue)),
+                React.createElement("span", { style: { color: C.faint } }, "Date opened"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, t.date)),
+            React.createElement("div", { className: "flex items-center justify-between px-3 py-2 rounded", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+                React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, "Unrealized P&L"),
+                React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: 600, color } },
+                    fmtUsd(upDown),
+                    " (",
+                    fmtPct(c.pnlPct),
+                    ")")),
+            t.notes && React.createElement("p", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, t.notes)))));
+}
+function TradesTable({ trades, prices, onEdit, onDelete }) {
+    if (!trades.length)
+        return React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No open trades right now. Closed trades live in the Ledger."));
+    return (React.createElement("div", { className: "flex flex-col gap-2" }, trades.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((t) => (React.createElement(OpenTradeRow, { key: t.id, t: t, price: prices[COIN_MAP[t.coin]], onEdit: onEdit, onDelete: onDelete })))));
+}
+/* =================================================================
+   DASHBOARD
+================================================================= */
+function Dashboard({ trades, prices, overrides, setOverride, onRefresh, loading, updatedAt, ledgerBalance, longTermValue }) {
+    const open = trades.filter((t) => !isClosed(t));
+    const closed = trades.filter(isClosed);
+    const totalRealized = closed.reduce((s, t) => s + computeTrade(t, prices[COIN_MAP[t.coin]]).netGain, 0);
+    const totalFees = trades.reduce((s, t) => s + (Number(t.fees) || 0), 0);
+    const totalInvestedOpen = open.reduce((s, t) => s + (Number(t.margin) || 0), 0);
+    const holdingsMap = {};
+    open.forEach((t) => {
+        var _a;
+        const key = t.coin;
+        if (!holdingsMap[key])
+            holdingsMap[key] = { coin: key, cost: 0, equity: 0, coinId: COIN_MAP[key] || null };
+        const price = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : (overrides[t.coin] ? Number(overrides[t.coin]) : null);
+        const c = computeTrade(t, price);
+        holdingsMap[key].cost += Number(t.margin) || 0;
+        holdingsMap[key].equity += t.margin + c.netGain;
+    });
+    const holdings = Object.values(holdingsMap);
+    let totalCurrentValue = 0, totalUnrealized = 0, anyMissingPrice = false;
+    const rows = holdings.map((h) => {
+        const hasPrice = prices[h.coinId] || overrides[h.coin];
+        if (!hasPrice)
+            anyMissingPrice = true;
+        totalCurrentValue += h.equity;
+        totalUnrealized += h.equity - h.cost;
+        return h;
+    });
+    const netWorth = totalCurrentValue + ledgerBalance + longTermValue;
+    return (React.createElement("div", { className: "flex flex-col gap-5" },
+        React.createElement(Panel, { style: { padding: 18 } },
+            React.createElement("span", { style: { color: C.muted, fontFamily: "Inter", fontSize: 11, letterSpacing: "0.04em" }, className: "uppercase font-medium" }, "Total net worth"),
+            React.createElement("div", { style: { fontFamily: "JetBrains Mono", fontSize: 32, fontWeight: 700, color: C.text } }, fmtUsd(netWorth)),
+            React.createElement("div", { className: "flex flex-wrap gap-4 mt-1", style: { fontFamily: "Inter", fontSize: 12, color: C.faint } },
+                React.createElement("span", null,
+                    "Open trades: ",
+                    React.createElement("b", { style: { color: C.text } }, fmtUsd(totalCurrentValue))),
+                React.createElement("span", null,
+                    "Leverage ledger: ",
+                    React.createElement("b", { style: { color: C.text } }, fmtUsd(ledgerBalance))),
+                React.createElement("span", null,
+                    "Long-term: ",
+                    React.createElement("b", { style: { color: C.text } }, fmtUsd(longTermValue))))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(SummaryCard, { label: "Open capital", value: fmtUsd(totalInvestedOpen), sub: `${open.length} open position${open.length === 1 ? "" : "s"}` }),
+            React.createElement(SummaryCard, { label: "Current equity", value: fmtUsd(totalCurrentValue), sub: anyMissingPrice ? "Some prices missing" : "Live-priced" }),
+            React.createElement(SummaryCard, { label: "Unrealized P&L", value: fmtUsd(totalUnrealized), tone: totalUnrealized >= 0 ? "gain" : "loss", sub: "Open positions only" }),
+            React.createElement(SummaryCard, { label: "Realized P&L", value: fmtUsd(totalRealized), tone: totalRealized >= 0 ? "gain" : "loss", sub: `${closed.length} closed · ${fmtUsd(totalFees)} fees` })),
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Open trade holdings"),
+            React.createElement("div", { className: "flex items-center gap-3" },
+                updatedAt && React.createElement("span", { style: { color: C.faint, fontFamily: "Inter", fontSize: 11 } },
+                    "Updated ",
+                    updatedAt),
+                React.createElement(Button, { variant: "ghost", onClick: onRefresh, disabled: loading },
+                    React.createElement(RefreshCw, { size: 14, className: loading ? "animate-spin" : "" }),
+                    " Refresh prices"))),
+        rows.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No open positions. Log one in the Open Trades tab."))) : (React.createElement(Panel, { style: { overflow: "hidden" } },
+            React.createElement("div", { className: "overflow-x-auto" },
+                React.createElement("table", { className: "w-full text-sm", style: { fontFamily: "JetBrains Mono" } },
+                    React.createElement("thead", null,
+                        React.createElement("tr", { style: { borderBottom: `1px solid ${C.hair}` } }, ["Coin", "Margin committed", "Price (live / manual)", "Equity", "Unrealized"].map((h) => React.createElement("th", { key: h, className: "text-left px-3 py-2.5 whitespace-nowrap", style: { color: C.muted, fontFamily: "Inter", fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" } }, h)))),
+                    React.createElement("tbody", null, rows.map((r) => {
+                        const gain = r.equity - r.cost;
+                        return (React.createElement("tr", { key: r.coin, style: { borderBottom: `1px solid ${C.hair}` } },
+                            React.createElement("td", { className: "px-3 py-2.5 font-semibold", style: { color: C.text } }, r.coin),
+                            React.createElement("td", { className: "px-3 py-2.5", style: { color: C.text } }, fmtUsd(r.cost)),
+                            React.createElement("td", { className: "px-3 py-2.5" },
+                                React.createElement("div", { className: "flex items-center gap-2" },
+                                    React.createElement("span", { style: { color: prices[r.coinId] ? C.text : C.faint } }, prices[r.coinId] ? fmtUsd(prices[r.coinId]) : "no feed"),
+                                    React.createElement("input", { placeholder: "manual", value: overrides[r.coin] || "", onChange: (e) => setOverride(r.coin, e.target.value), className: "w-20 rounded px-1.5 py-1 text-xs outline-none", style: { ...inputStyle } }))),
+                            React.createElement("td", { className: "px-3 py-2.5", style: { color: C.text } }, fmtUsd(r.equity)),
+                            React.createElement("td", { className: "px-3 py-2.5 font-semibold", style: { color: gain >= 0 ? C.gain : C.loss } },
+                                fmtUsd(gain),
+                                " (",
+                                fmtPct((gain / (r.cost || 1)) * 100),
+                                ")")));
+                    }))))))));
+}
+/* =================================================================
+   LEDGER (leverage compounding log)
+================================================================= */
+const emptyLedgerEntry = () => ({ id: null, type: "deposit", date: todayStr(), depositAmount: "" });
+// Deposits only — trades are logged in Open Trades and sync here automatically.
+function LedgerEntryForm({ initial, onSave, onCancel, pullFraction }) {
+    const [e, setE] = useState(initial || emptyLedgerEntry());
+    const set = (k, v) => setE((p) => ({ ...p, [k]: v }));
+    const submit = () => {
+        if (!e.depositAmount || Number(e.depositAmount) <= 0)
+            return;
+        onSave({ ...e, id: e.id || uid(), type: "deposit", depositAmount: Number(e.depositAmount) });
+    };
+    const previewAmount = Number(e.depositAmount) || 0;
+    const previewLedger = previewAmount * (1 - (pullFraction !== null && pullFraction !== void 0 ? pullFraction : 50) / 100);
+    const previewSweep = previewAmount * ((pullFraction !== null && pullFraction !== void 0 ? pullFraction : 50) / 100);
+    return (React.createElement(Panel, { style: { padding: 16 }, className: "flex flex-col gap-3" },
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(Field, { label: "Deposit amount ($)", hint: "Full amount \u2014 split happens automatically" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: e.depositAmount, onChange: (ev) => set("depositAmount", ev.target.value) })),
+            React.createElement(Field, { label: "Date" },
+                React.createElement(TextInput, { type: "date", value: e.date, onChange: (ev) => set("date", ev.target.value) }))),
+        previewAmount !== 0 && (React.createElement("div", { className: "flex items-center gap-4 px-3 py-2 rounded flex-wrap", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+            React.createElement("span", { style: { color: C.muted, fontSize: 12, fontFamily: "Inter" } }, "Splits to"),
+            React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 13, color: C.text } },
+                "\u2192 Ledger ",
+                fmtUsd(previewLedger)),
+            React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 13, color: C.violet } },
+                "\u2192 Long-term ",
+                fmtUsd(previewSweep)))),
+        React.createElement("div", { className: "flex gap-2 justify-end" },
+            React.createElement(Button, { variant: "ghost", onClick: onCancel },
+                React.createElement(X, { size: 14 }),
+                " Cancel"),
+            React.createElement(Button, { variant: "primary", onClick: submit },
+                React.createElement(Check, { size: 14 }),
+                " Save deposit"))));
+}
+function LedgerTable({ entries, onEdit, onDelete, pullFraction }) {
+    let running = 0;
+    const rows = entries.map((e) => {
+        const start = running;
+        const delta = ledgerDelta(e, pullFraction);
+        running += delta;
+        return { ...e, start, end: running, delta, sweep: ledgerSweep(e, pullFraction) };
+    });
+    if (!rows.length)
+        return React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No ledger entries yet. Add a deposit to set your starting balance \u2014 trades appear here automatically once you close them in Open Trades."));
+    return (React.createElement(Panel, { style: { overflow: "hidden" } },
+        React.createElement("div", { className: "overflow-x-auto" },
+            React.createElement("table", { className: "w-full text-sm", style: { fontFamily: "JetBrains Mono" } },
+                React.createElement("thead", null,
+                    React.createElement("tr", { style: { borderBottom: `1px solid ${C.hair}` } }, ["#", "Date", "Type", "Coin", "Amount", "→ Ledger", "→ Long-term", "Balance", ""].map((h) => React.createElement("th", { key: h, className: "text-left px-3 py-2.5 whitespace-nowrap", style: { color: C.muted, fontFamily: "Inter", fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" } }, h)))),
+                React.createElement("tbody", null, rows.slice().reverse().map((r, i) => {
+                    const color = r.type === "deposit" ? C.gold : r.delta > 0 ? C.gain : r.delta < 0 ? C.loss : C.muted;
+                    const amount = r.type === "deposit" ? r.depositAmount : r.gain;
+                    return (React.createElement("tr", { key: r.id, style: { borderBottom: `1px solid ${C.hair}` }, className: "hover:bg-white/[0.02]" },
+                        React.createElement("td", { className: "px-3 py-2 text-xs", style: { color: C.faint } }, rows.length - i),
+                        React.createElement("td", { className: "px-3 py-2", style: { color: C.muted } }, r.date),
+                        React.createElement("td", { className: "px-3 py-2" },
+                            React.createElement(Badge, { tone: r.type === "deposit" ? "gold" : "muted" }, r.type === "deposit" ? "Deposit" : (r.side || "long"))),
+                        React.createElement("td", { className: "px-3 py-2", style: { color: C.text } }, r.coin || "—"),
+                        React.createElement("td", { className: "px-3 py-2", style: { color: r.type === "deposit" ? C.gold : (r.gain >= 0 ? C.gain : C.loss) } }, fmtUsd(amount)),
+                        React.createElement("td", { className: "px-3 py-2 font-semibold", style: { color } },
+                            r.delta >= 0 ? "+" : "",
+                            fmtUsd(r.delta)),
+                        React.createElement("td", { className: "px-3 py-2", style: { color: C.violet } },
+                            r.sweep >= 0 ? "+" : "",
+                            fmtUsd(r.sweep)),
+                        React.createElement("td", { className: "px-3 py-2 font-semibold", style: { color: C.text } }, fmtUsd(r.end)),
+                        React.createElement("td", { className: "px-3 py-2" }, r.sourceTradeId ? (React.createElement("span", { title: "Edit this from Open Trades instead", style: { color: C.faint, fontFamily: "Inter", fontSize: 11 } }, "Synced")) : (React.createElement("div", { className: "flex gap-2" },
+                            React.createElement("button", { onClick: () => onEdit(r), style: { color: C.muted }, className: "hover:text-white" },
+                                React.createElement(Pencil, { size: 13 })),
+                            React.createElement("button", { onClick: () => onDelete(r.id), style: { color: C.muted }, className: "hover:text-red-400" },
+                                React.createElement(Trash2, { size: 13 })))))));
+                }))))));
+}
+function PaceToGoalCard({ settings, setSettings, initialBalance, currentBalance, tradesMade, firstDate }) {
+    const set = (k, v) => setSettings((s) => ({ ...s, [k]: v }));
+    const result = useMemo(() => paceToGoal({
+        initialBalance, currentBalance, target: Number(settings.target) || 0,
+        positionPct: Number(settings.positionPct) || 0, leverage: Number(settings.leverage) || 1,
+        targetGainPct: Number(settings.targetGainPct) || 0, pullFraction: Number(settings.pullFraction) || 0,
+        tradesMade, firstDate,
+    }), [initialBalance, currentBalance, settings, tradesMade, firstDate]);
+    return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
+        React.createElement("div", { className: "flex items-center gap-2" },
+            React.createElement(Zap, { size: 16, color: C.gold }),
+            React.createElement("h3", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Pace to goal")),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
+            React.createElement(Field, { label: "Target ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.target, onChange: (e) => set("target", e.target.value) })),
+            React.createElement(Field, { label: "Position size (%)", hint: "Of bankroll per trade" },
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.positionPct, onChange: (e) => set("positionPct", e.target.value) })),
+            React.createElement(Field, { label: "Leverage" },
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.leverage, onChange: (e) => set("leverage", e.target.value) })),
+            React.createElement(Field, { label: "Target gain / trade (%)" },
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.targetGainPct, onChange: (e) => set("targetGainPct", e.target.value) })),
+            React.createElement(Field, { label: "Pull to long-term (%)", hint: "Share of each gain swept out" },
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.pullFraction, onChange: (e) => set("pullFraction", e.target.value) }))),
+        !result ? (React.createElement("div", { className: "px-3 py-2.5 rounded", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+            React.createElement("span", { style: { fontFamily: "Inter", fontSize: 13, color: C.muted } }, "Set a target above your current balance, and a starting deposit on the ledger, to see pace."))) : (React.createElement(React.Fragment, null,
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+                React.createElement(SummaryCard, { label: "Trades needed (from start)", value: result.totalTradesFromStart.toLocaleString() }),
+                React.createElement(SummaryCard, { label: "Trades made", value: tradesMade.toLocaleString() }),
+                React.createElement(SummaryCard, { label: "Trades needed now", value: result.tradesNeededNow.toLocaleString(), sub: "From current balance" }),
+                React.createElement(SummaryCard, { label: result.tradesBehind >= 0 ? "Trades behind pace" : "Trades ahead of pace", value: Math.abs(result.tradesBehind).toLocaleString(), tone: result.tradesBehind >= 0 ? "loss" : "gain" })),
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" },
+                React.createElement(SummaryCard, { label: "$ gap vs. perfect pace", value: fmtUsd(result.dollarGap), tone: result.dollarGap > 0 ? "loss" : "gain", sub: fmtPct(-result.pctGap) + " of perfect" }),
+                React.createElement(SummaryCard, { label: "Pace", value: result.tradesPerDay ? `${result.tradesPerDay.toFixed(2)}/day` : "—" }),
+                React.createElement(SummaryCard, { label: "Projected hit date", value: result.etaDate ? result.etaDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—" }))))));
+}
+function statTable(rows, keyLabel) {
+    return (React.createElement("div", { className: "overflow-x-auto" },
+        React.createElement("table", { className: "w-full text-sm", style: { fontFamily: "JetBrains Mono" } },
+            React.createElement("thead", null,
+                React.createElement("tr", { style: { borderBottom: `1px solid ${C.hair}` } }, [keyLabel, "Total", "W", "L", "Win %"].map((h) => React.createElement("th", { key: h, className: "text-left px-3 py-2 whitespace-nowrap", style: { color: C.muted, fontFamily: "Inter", fontSize: 11, fontWeight: 500, textTransform: "uppercase" } }, h)))),
+            React.createElement("tbody", null, rows.map((r) => {
+                const winPct = (r.wins + r.losses) > 0 ? (r.wins / (r.wins + r.losses)) * 100 : null;
+                return (React.createElement("tr", { key: r.key, style: { borderBottom: `1px solid ${C.hair}` } },
+                    React.createElement("td", { className: "px-3 py-2 font-semibold", style: { color: C.text } }, r.key),
+                    React.createElement("td", { className: "px-3 py-2 font-semibold", style: { color: r.total >= 0 ? C.gain : C.loss } }, fmtUsd(r.total)),
+                    React.createElement("td", { className: "px-3 py-2", style: { color: C.gain } }, r.wins),
+                    React.createElement("td", { className: "px-3 py-2", style: { color: C.loss } }, r.losses),
+                    React.createElement("td", { className: "px-3 py-2", style: { color: C.muted } }, winPct === null ? "—" : winPct.toFixed(0) + "%")));
+            })))));
+}
+function LedgerAnalytics({ trades }) {
+    const nonZero = trades.filter((t) => t.gain !== 0);
+    const weekly = groupSum(nonZero, (e) => getISOWeekKey(e.date)).sort((a, b) => b.key.localeCompare(a.key)).slice(0, 12);
+    const monthly = groupSum(nonZero, (e) => getMonthKey(e.date)).sort((a, b) => b.key.localeCompare(a.key));
+    const byWeekday = groupSum(nonZero, (e) => getWeekdayName(e.date));
+    const orderedWeekday = WEEKDAYS.map((d) => byWeekday.find((r) => r.key === d) || { key: d, total: 0, wins: 0, losses: 0, count: 0 });
+    const byCoin = groupSum(nonZero.filter((t) => t.coin), (e) => e.coin).sort((a, b) => b.total - a.total);
+    const bySide = groupSum(nonZero, (e) => e.side === "short" ? "Short" : "Long");
+    const totalWins = nonZero.filter((t) => t.gain > 0).length;
+    const totalLosses = nonZero.filter((t) => t.gain < 0).length;
+    return (React.createElement("div", { className: "flex flex-col gap-4" },
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(SummaryCard, { label: "Wins", value: totalWins, tone: "gain" }),
+            React.createElement(SummaryCard, { label: "Losses", value: totalLosses, tone: "loss" }),
+            React.createElement(SummaryCard, { label: "Win rate", value: (totalWins + totalLosses) > 0 ? `${((totalWins / (totalWins + totalLosses)) * 100).toFixed(0)}%` : "—" }),
+            React.createElement(SummaryCard, { label: "Total trades", value: trades.length })),
+        React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4" },
+            React.createElement(Panel, { style: { padding: 16 } },
+                React.createElement("h4", { style: { fontFamily: "Space Grotesk", fontSize: 13, color: C.text, fontWeight: 600, marginBottom: 8 } }, "By week (last 12)"),
+                statTable(weekly, "Week")),
+            React.createElement(Panel, { style: { padding: 16 } },
+                React.createElement("h4", { style: { fontFamily: "Space Grotesk", fontSize: 13, color: C.text, fontWeight: 600, marginBottom: 8 } }, "By month"),
+                statTable(monthly, "Month")),
+            React.createElement(Panel, { style: { padding: 16 } },
+                React.createElement("h4", { style: { fontFamily: "Space Grotesk", fontSize: 13, color: C.text, fontWeight: 600, marginBottom: 8 } }, "By day of week"),
+                statTable(orderedWeekday, "Day")),
+            React.createElement(Panel, { style: { padding: 16 } },
+                React.createElement("h4", { style: { fontFamily: "Space Grotesk", fontSize: 13, color: C.text, fontWeight: 600, marginBottom: 8 } }, "By coin"),
+                byCoin.length ? statTable(byCoin, "Coin") : React.createElement("p", { style: { color: C.faint, fontFamily: "Inter", fontSize: 12 } }, "Tag trades with a coin to see this breakdown.")),
+            React.createElement(Panel, { style: { padding: 16 }, className: "lg:col-span-2" },
+                React.createElement("h4", { style: { fontFamily: "Space Grotesk", fontSize: 13, color: C.text, fontWeight: 600, marginBottom: 8 } }, "Long vs. short"),
+                statTable(bySide, "Side")))));
+}
+function LedgerTab({ ledger, setLedger, ledgerSettings, setLedgerSettings, onImportHistory, hasImported, longTermCash, setLongTermCash, prices }) {
+    const [showForm, setShowForm] = useState(false);
+    const [editing, setEditing] = useState(null);
+    const pullFraction = Number(ledgerSettings.pullFraction) || 0;
+    const saveEntry = (e) => {
+        setLedger((prev) => {
+            const existing = prev.find((p) => p.id === e.id);
+            if (existing) {
+                // edited entry — adjust the long-term cash by the difference in swept amount
+                const oldSweep = ledgerSweep(existing, pullFraction);
+                const newSweep = ledgerSweep(e, pullFraction);
+                if (oldSweep !== newSweep)
+                    setLongTermCash((c) => (Number(c) || 0) + (newSweep - oldSweep));
+                return prev.map((p) => (p.id === e.id ? e : p));
+            }
+            // new entry — half of any trade gain sweeps to long-term cash automatically
+            const sweep = ledgerSweep(e, pullFraction);
+            if (sweep)
+                setLongTermCash((c) => (Number(c) || 0) + sweep);
+            return [...prev, e];
+        });
+        setShowForm(false);
+        setEditing(null);
+    };
+    const deleteEntry = (id) => setLedger((prev) => {
+        const existing = prev.find((p) => p.id === id);
+        if (existing) {
+            const sweep = ledgerSweep(existing, pullFraction);
+            if (sweep)
+                setLongTermCash((c) => (Number(c) || 0) - sweep);
+        }
+        return prev.filter((e) => e.id !== id);
+    });
+    let running = 0;
+    const withRunning = ledger.map((e) => { running += ledgerDelta(e, pullFraction); return { ...e, running }; });
+    const currentBalance = withRunning.length ? withRunning[withRunning.length - 1].running : 0;
+    const initialBalance = ledger[0] ? (ledger[0].type === "deposit" ? ledger[0].depositAmount : 0) : 0;
+    const firstDate = ledger.length ? ledger.slice().sort((a, b) => a.date.localeCompare(b.date))[0].date : null;
+    const tradeEntries = ledger.filter((e) => e.type === "trade");
+    const totalDeposits = ledger.filter((e) => e.type === "deposit").reduce((s, e) => s + e.depositAmount, 0);
+    const totalRealized = tradeEntries.reduce((s, e) => s + e.gain, 0);
+    return (React.createElement("div", { className: "flex flex-col gap-5" },
+        !hasImported && (React.createElement(Panel, { style: { padding: 16 }, className: "flex items-center justify-between gap-3 flex-wrap" },
+            React.createElement("div", null,
+                React.createElement("div", { style: { fontFamily: "Space Grotesk", fontSize: 14, fontWeight: 600, color: C.text } }, "Import your trading history"),
+                React.createElement("div", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, "111 trades + 5 deposits from your spreadsheet, dates verified exact.")),
+            React.createElement(Button, { variant: "gold", onClick: onImportHistory },
+                React.createElement(Zap, { size: 14 }),
+                " Import now"))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(SummaryCard, { label: "Current balance", value: fmtUsd(currentBalance) }),
+            React.createElement(SummaryCard, { label: "Total deposits", value: fmtUsd(totalDeposits), tone: "gold" }),
+            React.createElement(SummaryCard, { label: "Total realized gain", value: fmtUsd(totalRealized), tone: totalRealized >= 0 ? "gain" : "loss" }),
+            React.createElement(SummaryCard, { label: "Trades logged", value: tradeEntries.length })),
+        React.createElement("p", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } },
+            "Trades close out in Open Trades and land here automatically \u2014 this tab is just for deposits. Every deposit and synced trade splits ",
+            pullFraction,
+            "% into \"Uninvested cash\" on the Long-Term tab."),
+        React.createElement(PaceToGoalCard, { settings: ledgerSettings, setSettings: setLedgerSettings, initialBalance: initialBalance || currentBalance, currentBalance: currentBalance, tradesMade: tradeEntries.length, firstDate: firstDate }),
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Ledger"),
+            !showForm && React.createElement(Button, { variant: "primary", onClick: () => { setEditing(null); setShowForm(true); } },
+                React.createElement(Plus, { size: 14 }),
+                " Add deposit")),
+        showForm && React.createElement(LedgerEntryForm, { initial: editing, onSave: saveEntry, onCancel: () => { setShowForm(false); setEditing(null); }, pullFraction: pullFraction }),
+        React.createElement(LedgerTable, { entries: ledger, onEdit: (e) => { setEditing(e); setShowForm(true); }, onDelete: deleteEntry, pullFraction: pullFraction }),
+        React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Analytics"),
+        React.createElement(LedgerAnalytics, { trades: tradeEntries })));
+}
+/* =================================================================
+   LONG-TERM PORTFOLIO
+================================================================= */
+const emptyPosition = () => ({ id: null, coin: "BTC", customCoin: "", margin: "", leverage: "3", entry: "", mark: "", liquidation: "", ath: "", delisted: false, notes: "" });
+function PositionForm({ initial, onSave, onCancel }) {
+    const [p, setP] = useState(initial || emptyPosition());
+    const set = (k, v) => setP((prev) => ({ ...prev, [k]: v }));
+    const isCustom = p.coin === "__custom__";
+    const submit = () => {
+        if (!p.margin || Number(p.margin) <= 0 || !p.entry)
+            return;
+        const coinSymbol = isCustom ? (p.customCoin || "CUSTOM").toUpperCase() : p.coin;
+        onSave({ ...p, id: p.id || uid(), coin: coinSymbol, margin: Number(p.margin), leverage: Number(p.leverage) || 1, entry: Number(p.entry), mark: p.mark === "" ? Number(p.entry) : Number(p.mark), liquidation: p.liquidation === "" ? "" : Number(p.liquidation), ath: p.ath === "" ? "" : Number(p.ath) });
+    };
+    return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(Field, { label: "Coin" },
+                React.createElement(Select, { value: p.coin, onChange: (e) => set("coin", e.target.value) },
+                    COIN_LIST.map((c) => React.createElement("option", { key: c, value: c }, c)),
+                    React.createElement("option", { value: "__custom__" }, "Custom / other\u2026"))),
+            isCustom && React.createElement(Field, { label: "Symbol" },
+                React.createElement(TextInput, { placeholder: "e.g. TAO", value: p.customCoin, onChange: (e) => set("customCoin", e.target.value) })),
+            React.createElement(Field, { label: "Margin ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", value: p.margin, onChange: (e) => set("margin", e.target.value) })),
+            React.createElement(Field, { label: "Leverage" },
+                React.createElement(TextInput, { type: "number", step: "any", value: p.leverage, onChange: (e) => set("leverage", e.target.value) }))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(Field, { label: "Entry price ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", value: p.entry, onChange: (e) => set("entry", e.target.value) })),
+            React.createElement(Field, { label: "Mark price ($)", hint: "Blank = use entry" },
+                React.createElement(TextInput, { type: "number", step: "any", value: p.mark, onChange: (e) => set("mark", e.target.value) })),
+            React.createElement(Field, { label: "Liquidation price ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", value: p.liquidation, onChange: (e) => set("liquidation", e.target.value) })),
+            React.createElement(Field, { label: "ATH ($)", hint: "Or fetch after saving" },
+                React.createElement(TextInput, { type: "number", step: "any", value: p.ath, onChange: (e) => set("ath", e.target.value) }))),
+        React.createElement("label", { className: "flex items-center gap-2", style: { fontSize: 12, color: C.muted, fontFamily: "Inter" } },
+            React.createElement("input", { type: "checkbox", checked: p.delisted, onChange: (e) => set("delisted", e.target.checked) }),
+            " Delisted \u2014 keep visible, skip live price fetch"),
+        React.createElement(Field, { label: "Notes" },
+            React.createElement(TextInput, { placeholder: "Optional", value: p.notes, onChange: (e) => set("notes", e.target.value) })),
+        React.createElement("div", { className: "flex gap-2 justify-end" },
+            React.createElement(Button, { variant: "ghost", onClick: onCancel },
+                React.createElement(X, { size: 14 }),
+                " Cancel"),
+            React.createElement(Button, { variant: "primary", onClick: submit },
+                React.createElement(Check, { size: 14 }),
+                " Save position"))));
+}
+function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAth, fetchingAth }) {
+    const [expanded, setExpanded] = useState(false);
+    const notional = p.margin * p.leverage;
+    const qty = p.entry ? notional / p.entry : 0;
+    const markPrice = price !== null && price !== void 0 ? price : p.mark;
+    const notionalValue = qty * markPrice;
+    const pnl = notionalValue - notional;
+    const equity = p.margin + pnl;
+    const pnlPct = p.margin !== 0 ? (pnl / p.margin) * 100 : 0;
+    const athPnl = p.ath ? qty * p.ath - notional : null;
+    const pnlAt5x = qty * p.entry * 5 - notional;
+    const pnlAt10x = qty * p.entry * 10 - notional;
+    return (React.createElement(Panel, { style: { overflow: "hidden" } },
+        React.createElement("button", { onClick: () => setExpanded((v) => !v), className: "w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.02]", style: { background: "transparent", border: "none", cursor: "pointer" } },
+            React.createElement("div", { className: "flex items-center gap-2.5" },
+                React.createElement(ChevronRight, { size: 14, color: C.faint, style: { transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }),
+                React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 14, fontWeight: 700, color: C.text } }, p.coin),
+                React.createElement(Badge, { tone: "violet" },
+                    p.leverage,
+                    "x"),
+                p.delisted && React.createElement(Badge, { tone: "muted" }, "Delisted")),
+            React.createElement("div", { className: "flex items-center gap-4", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
+                React.createElement("span", { style: { color: C.faint }, className: "hidden sm:inline" },
+                    "Equity ",
+                    fmtUsd(equity)),
+                React.createElement("span", { style: { color: pnl >= 0 ? C.gain : C.loss, fontWeight: 600 } }, fmtPct(pnlPct)))),
+        expanded && (React.createElement("div", { className: "flex flex-col gap-3 px-4 pb-4", style: { borderTop: `1px solid ${C.hair}` } },
+            React.createElement("div", { className: "flex justify-end gap-2 pt-3" },
+                React.createElement(Button, { variant: "ghost", onClick: () => onEdit(p) },
+                    React.createElement(Pencil, { size: 13 }),
+                    " Edit"),
+                React.createElement(Button, { variant: "danger", onClick: () => onDelete(p.id) },
+                    React.createElement(Trash2, { size: 13 }),
+                    " Delete")),
+            React.createElement("div", { className: "grid grid-cols-2 gap-x-4 gap-y-1.5", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
+                React.createElement("span", { style: { color: C.faint } }, "Margin"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(p.margin)),
+                React.createElement("span", { style: { color: C.faint } }, "Notional"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(notional)),
+                React.createElement("span", { style: { color: C.faint } }, "Entry"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(p.entry)),
+                React.createElement("span", { style: { color: C.faint } }, "Mark"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } },
+                    fmtUsd(markPrice),
+                    price ? "" : " (manual)"),
+                p.liquidation !== "" && React.createElement(React.Fragment, null,
+                    React.createElement("span", { style: { color: C.faint } }, "Liquidation"),
+                    React.createElement("span", { style: { color: C.loss, textAlign: "right" } }, fmtUsd(p.liquidation))),
+                React.createElement("span", { style: { color: C.faint } }, "Notional value"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(notionalValue)),
+                React.createElement("span", { style: { color: C.faint } }, "Equity (net worth)"),
+                React.createElement("span", { style: { color: C.text, textAlign: "right", fontWeight: 600 } }, fmtUsd(equity))),
+            React.createElement("div", { className: "flex items-center justify-between px-3 py-2 rounded", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+                React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, "P&L"),
+                React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: 600, color: pnl >= 0 ? C.gain : C.loss } },
+                    fmtUsd(pnl),
+                    " (",
+                    fmtPct(pnlPct),
+                    ")")),
+            React.createElement("div", { className: "flex items-center justify-between" },
+                React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint, textTransform: "uppercase" } }, "Realized from short-term trades"),
+                React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: realizedFromLedger >= 0 ? C.gain : C.loss } }, fmtUsd(realizedFromLedger))),
+            React.createElement("div", { className: "grid grid-cols-3 gap-2 pt-1", style: { borderTop: `1px solid ${C.hair}` } },
+                React.createElement("div", { className: "flex flex-col gap-0.5 pt-2" },
+                    React.createElement("span", { style: { fontFamily: "Inter", fontSize: 10, color: C.faint, textTransform: "uppercase" } }, "At ATH"),
+                    React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.gold } }, p.ath ? fmtUsd(athPnl) : "—")),
+                React.createElement("div", { className: "flex flex-col gap-0.5 pt-2" },
+                    React.createElement("span", { style: { fontFamily: "Inter", fontSize: 10, color: C.faint, textTransform: "uppercase" } }, "At 5x entry"),
+                    React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.gold } }, fmtUsd(pnlAt5x))),
+                React.createElement("div", { className: "flex flex-col gap-0.5 pt-2" },
+                    React.createElement("span", { style: { fontFamily: "Inter", fontSize: 10, color: C.faint, textTransform: "uppercase" } }, "At 10x entry"),
+                    React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.gold } }, fmtUsd(pnlAt10x)))),
+            !p.ath && !p.delisted && (React.createElement(Button, { variant: "ghost", onClick: () => onFetchAth(p), disabled: fetchingAth },
+                React.createElement(RefreshCw, { size: 13, className: fetchingAth ? "animate-spin" : "" }),
+                " Fetch ATH from CoinGecko"))))));
+}
+function LongTermTab({ positions, setPositions, prices, transfers, setTransfers, ledgerByCoin, ledgerAutoSweep, legacy, setLegacy, onImportHistory, hasImported, cash, setCash }) {
+    const [showForm, setShowForm] = useState(false);
+    const [editing, setEditing] = useState(null);
+    const [fetchingId, setFetchingId] = useState(null);
+    const [transferAmount, setTransferAmount] = useState("");
+    const savePosition = (p) => {
+        setPositions((prev) => { const exists = prev.some((x) => x.id === p.id); return exists ? prev.map((x) => (x.id === p.id ? p : x)) : [...prev, p]; });
+        setShowForm(false);
+        setEditing(null);
+    };
+    const deletePosition = (id) => setPositions((prev) => prev.filter((p) => p.id !== id));
+    const fetchAth = async (p) => {
+        var _a, _b;
+        const coinId = COIN_MAP[p.coin];
+        if (!coinId)
+            return;
+        setFetchingId(p.id);
+        try {
+            const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`);
+            const data = await res.json();
+            const ath = (_b = (_a = data === null || data === void 0 ? void 0 : data.market_data) === null || _a === void 0 ? void 0 : _a.ath) === null || _b === void 0 ? void 0 : _b.usd;
+            if (ath)
+                savePosition({ ...p, ath });
+        }
+        catch (e) { /* silent — user can enter manually */ }
+        setFetchingId(null);
+    };
+    const totalMargin = positions.reduce((s, p) => s + p.margin, 0);
+    const positionsEquity = positions.reduce((s, p) => {
+        var _a;
+        const price = p.delisted ? p.mark : ((_a = prices[COIN_MAP[p.coin]]) !== null && _a !== void 0 ? _a : p.mark);
+        const notional = p.margin * p.leverage;
+        const qty = p.entry ? notional / p.entry : 0;
+        const pnl = qty * price - notional;
+        return s + (p.margin + pnl); // equity, not notional exposure
+    }, 0);
+    const cashAmount = Number(cash) || 0;
+    const totalValue = positionsEquity + cashAmount;
+    const manualTransfers = transfers.reduce((s, t) => s + t.amount, 0);
+    const legacyTotal = legacy.reduce((s, l) => s + l.value, 0);
+    const totalTransfers = manualTransfers + ledgerAutoSweep;
+    const addTransfer = () => {
+        if (!transferAmount || Number(transferAmount) <= 0)
+            return;
+        setTransfers((prev) => [...prev, { id: uid(), amount: Number(transferAmount), date: todayStr() }]);
+        setTransferAmount("");
+    };
+    const deleteLegacy = (id) => setLegacy((prev) => prev.filter((l) => l.id !== id));
+    return (React.createElement("div", { className: "flex flex-col gap-5" },
+        !hasImported && (React.createElement(Panel, { style: { padding: 16 }, className: "flex items-center justify-between gap-3 flex-wrap" },
+            React.createElement("div", null,
+                React.createElement("div", { style: { fontFamily: "Space Grotesk", fontSize: 14, fontWeight: 600, color: C.text } }, "Import your positions"),
+                React.createElement("div", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } }, "15 real positions + legacy delisted values from your spreadsheet.")),
+            React.createElement(Button, { variant: "gold", onClick: onImportHistory },
+                React.createElement(Zap, { size: 14 }),
+                " Import now"))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(SummaryCard, { label: "Total value", value: fmtUsd(totalValue), sub: "Invested equity + uninvested cash" }),
+            React.createElement(SummaryCard, { label: "Total margin committed", value: fmtUsd(totalMargin) }),
+            React.createElement(SummaryCard, { label: "Total transferred in", value: fmtUsd(totalTransfers), tone: "gold", sub: `${fmtUsd(ledgerAutoSweep)} auto from ledger + ${fmtUsd(manualTransfers)} manual` }),
+            React.createElement(SummaryCard, { label: "Legacy (delisted)", value: fmtUsd(legacyTotal), sub: `${legacy.length} entries` })),
+        React.createElement(Panel, { style: { padding: 16 }, className: "flex items-end gap-3 flex-wrap" },
+            React.createElement(Field, { label: "Uninvested cash in long-term account ($)", hint: "Swept profit not yet put into a position", className: "flex-1 min-w-[200px]" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: cash, onChange: (e) => setCash(e.target.value) }))),
+        React.createElement(Panel, { style: { padding: 16 }, className: "flex items-end gap-3 flex-wrap" },
+            React.createElement(Field, { label: "Log an extra manual transfer in ($)", className: "flex-1 min-w-[160px]" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: transferAmount, onChange: (e) => setTransferAmount(e.target.value) })),
+            React.createElement(Button, { variant: "gold", onClick: addTransfer },
+                React.createElement(DollarSign, { size: 14 }),
+                " Log transfer")),
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Positions"),
+            !showForm && React.createElement(Button, { variant: "primary", onClick: () => { setEditing(null); setShowForm(true); } },
+                React.createElement(Plus, { size: 14 }),
+                " Add position")),
+        showForm && React.createElement(PositionForm, { initial: editing, onSave: savePosition, onCancel: () => { setShowForm(false); setEditing(null); } }),
+        positions.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-2" }, positions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[COIN_MAP[p.coin]], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id }))))),
+        legacy.length > 0 && (React.createElement(React.Fragment, null,
+            React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Legacy / delisted"),
+            React.createElement(Panel, { style: { padding: 16 }, className: "flex flex-col gap-2" },
+                React.createElement("p", { style: { color: C.faint, fontFamily: "Inter", fontSize: 12 } }, "Coins no longer tradeable \u2014 original names weren't recoverable, just the dollar values carried forward."),
+                legacy.map((l, i) => (React.createElement("div", { key: l.id, className: "flex items-center justify-between px-3 py-2 rounded", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+                    React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } },
+                        "Delisted #",
+                        i + 1),
+                    React.createElement("div", { className: "flex items-center gap-3" },
+                        React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 13, fontWeight: 600, color: l.value >= 0 ? C.gain : C.loss } }, fmtUsd(l.value)),
+                        React.createElement("button", { onClick: () => deleteLegacy(l.id), style: { color: C.muted }, className: "hover:text-red-400" },
+                            React.createElement(Trash2, { size: 13 })))))))))));
+}
+/* =================================================================
+   GOALS (time-based calculator, unchanged)
+================================================================= */
+function projectGoal({ current, target, monthlyContribution, annualRate }) {
+    const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
+    let value = current;
+    const points = [{ month: 0, value }];
+    let hitMonth = value >= target ? 0 : null;
+    const maxMonths = 600;
+    for (let m = 1; m <= maxMonths; m++) {
+        value = value * (1 + monthlyRate) + monthlyContribution;
+        points.push({ month: m, value });
+        if (hitMonth === null && value >= target) {
+            hitMonth = m;
+            break;
+        }
+    }
+    return { hitMonth, points };
+}
+function monthsToLabel(m) {
+    const years = Math.floor(m / 12), months = m % 12;
+    const parts = [];
+    if (years)
+        parts.push(`${years}y`);
+    if (months || !years)
+        parts.push(`${months}mo`);
+    return parts.join(" ");
+}
+function GoalSparkChart({ points, target }) {
+    const w = 600, h = 220, pad = 36;
+    const maxVal = Math.max(target, ...points.map((p) => p.value)) * 1.05;
+    const x = (i) => pad + (i / (points.length - 1)) * (w - pad * 1.5);
+    const y = (v) => h - pad - (v / maxVal) * (h - pad * 1.6);
+    const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p.value).toFixed(1)}`).join(" ");
+    const targetY = y(target);
+    return (React.createElement("svg", { viewBox: `0 0 ${w} ${h}`, width: "100%", height: "220" },
+        [0, 0.25, 0.5, 0.75, 1].map((f, i) => (React.createElement("line", { key: i, x1: pad, x2: w - pad * 0.5, y1: pad + f * (h - pad * 1.6), y2: pad + f * (h - pad * 1.6), stroke: C.hair, strokeDasharray: "3 3" }))),
+        React.createElement("line", { x1: pad, x2: w - pad * 0.5, y1: targetY, y2: targetY, stroke: C.gold, strokeDasharray: "4 4" }),
+        React.createElement("text", { x: pad, y: targetY - 6, fill: C.gold, fontSize: "11", fontFamily: "Inter" }, "Target"),
+        React.createElement("path", { d: path, fill: "none", stroke: C.accent, strokeWidth: "2.5" }),
+        React.createElement("text", { x: pad, y: h - 8, fill: C.faint, fontSize: "11", fontFamily: "Inter" }, "Today"),
+        React.createElement("text", { x: w - pad * 0.5, y: h - 8, fill: C.faint, fontSize: "11", fontFamily: "Inter", textAnchor: "end" }, points[points.length - 1].label)));
+}
+function GoalCard({ goal, onChange, onDelete, currentPortfolioValue }) {
+    const g = goal;
+    const set = (k, v) => onChange({ ...g, [k]: v });
+    const current = g.useLive ? currentPortfolioValue : Number(g.currentOverride) || 0;
+    const target = Number(g.target) || 0;
+    const contribution = Number(g.monthlyContribution) || 0;
+    const rate = Number(g.annualRate) || 0;
+    const { hitMonth, points } = useMemo(() => projectGoal({ current, target, monthlyContribution: contribution, annualRate: rate }), [current, target, contribution, rate]);
+    const today = new Date();
+    const hitDate = hitMonth !== null ? new Date(today.getFullYear(), today.getMonth() + hitMonth, 1) : null;
+    const chartData = points.filter((_, i) => i % Math.max(1, Math.ceil(points.length / 60)) === 0 || i === points.length - 1).map((p) => ({ ...p, label: `${today.getFullYear() + Math.floor((today.getMonth() + p.month) / 12)}` }));
+    return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
+        React.createElement("div", { className: "flex items-start justify-between gap-3" },
+            React.createElement(TextInput, { value: g.name, onChange: (e) => set("name", e.target.value), placeholder: "Goal name", style: { fontFamily: "Space Grotesk", fontSize: 15, fontWeight: 600, background: "transparent", border: "none", padding: 0, color: C.text } }),
+            React.createElement("button", { onClick: () => onDelete(g.id), style: { color: C.faint }, className: "hover:text-red-400 shrink-0" },
+                React.createElement(Trash2, { size: 16 }))),
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+            React.createElement(Field, { label: "Target value ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", value: g.target, onChange: (e) => set("target", e.target.value) })),
+            React.createElement(Field, { label: "Current value ($)" },
+                React.createElement("div", { className: "flex flex-col gap-1" },
+                    React.createElement(TextInput, { type: "number", step: "any", disabled: g.useLive, value: g.useLive ? Math.round(currentPortfolioValue) : g.currentOverride, onChange: (e) => set("currentOverride", e.target.value) }),
+                    React.createElement("label", { className: "flex items-center gap-1.5", style: { fontSize: 11, color: C.muted, fontFamily: "Inter" } },
+                        React.createElement("input", { type: "checkbox", checked: g.useLive, onChange: (e) => set("useLive", e.target.checked) }),
+                        " Use live net worth"))),
+            React.createElement(Field, { label: "Monthly contribution ($)" },
+                React.createElement(TextInput, { type: "number", step: "any", value: g.monthlyContribution, onChange: (e) => set("monthlyContribution", e.target.value) })),
+            React.createElement(Field, { label: "Expected annual growth (%)", hint: "Your assumed CAGR" },
+                React.createElement(TextInput, { type: "number", step: "any", value: g.annualRate, onChange: (e) => set("annualRate", e.target.value) }))),
+        React.createElement("div", { className: "flex items-center gap-3 px-3 py-2.5 rounded", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
+            React.createElement(Target, { size: 16, color: hitMonth !== null ? C.gold : C.muted }),
+            target <= current ? React.createElement("span", { style: { fontFamily: "Inter", fontSize: 13, color: C.gain } }, "Target already reached.")
+                : hitMonth === null ? React.createElement("span", { style: { fontFamily: "Inter", fontSize: 13, color: C.loss } }, "Not reachable within 50 years at this rate.")
+                    : React.createElement("span", { style: { fontFamily: "Inter", fontSize: 13, color: C.text } },
+                        "Projected to hit ",
+                        React.createElement("b", { style: { color: C.gold } }, fmtUsd(target)),
+                        " in ",
+                        React.createElement("b", null, monthsToLabel(hitMonth)),
+                        " \u2014 around ",
+                        React.createElement("b", null, hitDate.toLocaleString(undefined, { month: "long", year: "numeric" })),
+                        ".")),
+        React.createElement(GoalSparkChart, { points: chartData, target: target })));
+}
+function GoalsTab({ goals, setGoals, currentPortfolioValue }) {
+    const addGoal = () => setGoals((gs) => [...gs, { id: uid(), name: `Goal ${gs.length + 1}`, target: "100000", currentOverride: "0", useLive: true, monthlyContribution: "500", annualRate: "20" }]);
+    const updateGoal = (g) => setGoals((gs) => gs.map((x) => (x.id === g.id ? g : x)));
+    const deleteGoal = (id) => setGoals((gs) => gs.filter((x) => x.id !== id));
+    return (React.createElement("div", { className: "flex flex-col gap-4" },
+        React.createElement("div", { className: "flex items-center justify-between" },
+            React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Time-based goal calculator"),
+            React.createElement(Button, { variant: "gold", onClick: addGoal },
+                React.createElement(Plus, { size: 14 }),
+                " New goal")),
+        goals.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No goals yet."))) : (React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4" }, goals.map((g) => React.createElement(GoalCard, { key: g.id, goal: g, onChange: updateGoal, onDelete: deleteGoal, currentPortfolioValue: currentPortfolioValue }))))));
+}
+/* =================================================================
+   APP
+================================================================= */
+function App() {
+    // Title only — the actual favicon / apple-touch-icon are set as static
+    // <link> tags in the page <head>, not injected here. iOS's "Add to
+    // Home Screen" needs a real PNG present at load time, not a
+    // JS-injected data-URI SVG, or it silently falls back to a screenshot.
+    useEffect(() => {
+        document.title = "Coinfolio · history loaded";
+    }, []);
+    const [tab, setTab] = useState("dashboard");
+    const [trades, setTrades] = useState([]);
+    const [ledger, setLedger] = useState(() => HISTORICAL_LEDGER.map((e) => ({ ...e, id: uid() })));
+    const [ledgerSettings, setLedgerSettings] = useState({ target: "500000", positionPct: "50", leverage: "10", targetGainPct: "1", pullFraction: "50" });
+    const [positions, setPositions] = useState(() => HISTORICAL_POSITIONS.map((p) => ({ ...p, id: uid(), customCoin: "", delisted: false, notes: "" })));
+    const [transfers, setTransfers] = useState([]);
+    const [legacy, setLegacy] = useState(() => HISTORICAL_LEGACY.map((v) => ({ id: uid(), value: v })));
+    const [longTermCash, setLongTermCash] = useState(() => {
+        const totalSwept = HISTORICAL_LEDGER.reduce((s, e) => s + ledgerSweep(e, 50), 0);
+        const totalMargin = HISTORICAL_POSITIONS.reduce((s, p) => s + p.margin, 0);
+        return String(Math.round((totalSwept - totalMargin) * 100) / 100);
+    });
+    const [goals, setGoals] = useState([]);
+    const [overrides, setOverrides] = useState({});
+    const [prices, setPrices] = useState({});
+    const [loading, setLoading] = useState(false);
+    const [updatedAt, setUpdatedAt] = useState(null);
+    const [showForm, setShowForm] = useState(false);
+    const [editing, setEditing] = useState(null);
+    const [ready, setReady] = useState(false);
+    const [fetchError, setFetchError] = useState(null);
+    useEffect(() => {
+        (async () => {
+            const [t, g, o, led, ledSet, pos, tr, leg, cash] = await Promise.all([
+                safeStorageGet("coinfolio_trades"), safeStorageGet("coinfolio_goals"), safeStorageGet("coinfolio_overrides"),
+                safeStorageGet("coinfolio_ledger"), safeStorageGet("coinfolio_ledger_settings"),
+                safeStorageGet("coinfolio_longterm"), safeStorageGet("coinfolio_transfers"), safeStorageGet("coinfolio_legacy"),
+                safeStorageGet("coinfolio_longterm_cash"),
+            ]);
+            if (t)
+                setTrades(t);
+            if (g)
+                setGoals(g);
+            if (o)
+                setOverrides(o);
+            if (led)
+                setLedger(led);
+            if (ledSet)
+                setLedgerSettings((s) => ({ ...s, ...ledSet }));
+            if (pos)
+                setPositions(pos);
+            if (tr)
+                setTransfers(tr);
+            if (leg)
+                setLegacy(leg);
+            if (cash !== null && cash !== undefined)
+                setLongTermCash(cash);
+            setReady(true);
+        })();
+    }, []);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_trades", trades); }, [trades, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_goals", goals); }, [goals, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_overrides", overrides); }, [overrides, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_ledger", ledger); }, [ledger, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_ledger_settings", ledgerSettings); }, [ledgerSettings, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_longterm", positions); }, [positions, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_transfers", transfers); }, [transfers, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_legacy", legacy); }, [legacy, ready]);
+    useEffect(() => { if (ready)
+        safeStorageSet("coinfolio_longterm_cash", longTermCash); }, [longTermCash, ready]);
+    // Fetch every known coin so the Ledger's live-price lookup always has
+    // a value ready, regardless of what's currently held elsewhere.
+    const relevantCoinIds = useMemo(() => Array.from(new Set(Object.values(COIN_MAP))), []);
+    const fetchPrices = useCallback(async () => {
+        setLoading(true);
+        setFetchError(null);
+        try {
+            const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${relevantCoinIds.join(",")}&vs_currencies=usd`);
+            if (!res.ok)
+                throw new Error("bad response");
+            const data = await res.json();
+            const next = {};
+            Object.entries(data).forEach(([id, v]) => { next[id] = v.usd; });
+            setPrices(next);
+            setUpdatedAt(new Date().toLocaleTimeString());
+        }
+        catch (e) {
+            setFetchError("Couldn't reach the live price feed — enter prices manually where needed.");
+        }
+        finally {
+            setLoading(false);
+        }
+    }, [relevantCoinIds]);
+    useEffect(() => { if (ready)
+        fetchPrices(); }, [ready]); // eslint-disable-line
+    const setOverride = (coin, val) => setOverrides((o) => ({ ...o, [coin]: val }));
+    // Open Trades auto-syncs to the Ledger: closing a trade creates/updates a
+    // linked Ledger entry; reopening or deleting removes it. No manual "add
+    // trade" step in the Ledger anymore — trades only ever originate here.
+    const saveTrade = (t) => {
+        var _a;
+        let finalTrade = { ...t };
+        if (isClosed(t)) {
+            const price = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : null;
+            const c = computeTrade(t, price);
+            const ledgerEntryData = { type: "trade", date: t.date, coin: t.coin, side: t.side, gain: c.netGain, sourceTradeId: t.id };
+            if (t.ledgerEntryId) {
+                setLedger((prev) => prev.map((e) => (e.id === t.ledgerEntryId ? { ...e, ...ledgerEntryData } : e)));
+            }
+            else {
+                const newId = uid();
+                finalTrade.ledgerEntryId = newId;
+                setLedger((prev) => [...prev, { ...ledgerEntryData, id: newId }]);
+            }
+        }
+        else if (t.ledgerEntryId) {
+            setLedger((prev) => prev.filter((e) => e.id !== t.ledgerEntryId));
+            finalTrade.ledgerEntryId = null;
+        }
+        setTrades((prev) => { const exists = prev.some((p) => p.id === finalTrade.id); return exists ? prev.map((p) => (p.id === finalTrade.id ? finalTrade : p)) : [...prev, finalTrade]; });
+        setShowForm(false);
+        setEditing(null);
+    };
+    const deleteTrade = (id) => {
+        setTrades((prev) => {
+            const t = prev.find((x) => x.id === id);
+            if (t && t.ledgerEntryId)
+                setLedger((prevL) => prevL.filter((e) => e.id !== t.ledgerEntryId));
+            return prev.filter((x) => x.id !== id);
+        });
+    };
+    const openTrades = trades.filter((t) => !isClosed(t));
+    const spotValue = useMemo(() => {
+        return openTrades.reduce((sum, t) => {
+            var _a;
+            const price = (_a = prices[COIN_MAP[t.coin]]) !== null && _a !== void 0 ? _a : (overrides[t.coin] ? Number(overrides[t.coin]) : null);
+            const c = computeTrade(t, price);
+            return sum + (Number(t.margin) || 0) + c.netGain;
+        }, 0);
+    }, [openTrades, prices, overrides]);
+    const pullFraction = Number(ledgerSettings.pullFraction) || 0;
+    const ledgerBalance = useMemo(() => ledger.reduce((s, e) => s + ledgerDelta(e, pullFraction), 0), [ledger, pullFraction]);
+    const ledgerAutoSweep = useMemo(() => ledger.reduce((s, e) => s + ledgerSweep(e, pullFraction), 0), [ledger, pullFraction]);
+    const hasImportedHistory = ledger.length > 0 || positions.length > 0;
+    const importHistory = () => {
+        setLedger((prev) => [...prev, ...HISTORICAL_LEDGER.map((e) => ({ ...e, id: uid() }))]);
+        setPositions((prev) => [...prev, ...HISTORICAL_POSITIONS.map((p) => ({ ...p, id: uid(), customCoin: "", delisted: false, notes: "" }))]);
+        setLegacy((prev) => [...prev, ...HISTORICAL_LEGACY.map((v) => ({ id: uid(), value: v }))]);
+        const totalSwept = HISTORICAL_LEDGER.reduce((s, e) => s + ledgerSweep(e, 50), 0);
+        const totalMargin = HISTORICAL_POSITIONS.reduce((s, p) => s + p.margin, 0);
+        setLongTermCash((c) => (Number(c) || 0) + (totalSwept - totalMargin));
+    };
+    const ledgerByCoin = useMemo(() => {
+        const map = {};
+        ledger.filter((e) => e.type === "trade" && e.coin).forEach((e) => { map[e.coin] = (map[e.coin] || 0) + e.gain; });
+        return map;
+    }, [ledger]);
+    const longTermValue = useMemo(() => {
+        const positionsEquity = positions.reduce((s, p) => {
+            var _a;
+            const price = p.delisted ? p.mark : ((_a = prices[COIN_MAP[p.coin]]) !== null && _a !== void 0 ? _a : p.mark);
+            const notional = p.margin * p.leverage;
+            const qty = p.entry ? notional / p.entry : 0;
+            const pnl = qty * price - notional;
+            return s + (p.margin + pnl); // equity, not notional exposure
+        }, 0);
+        return positionsEquity + (Number(longTermCash) || 0);
+    }, [positions, prices, longTermCash]);
+    const legacyTotal = useMemo(() => legacy.reduce((s, l) => s + l.value, 0), [legacy]);
+    const netWorth = spotValue + ledgerBalance + longTermValue + legacyTotal;
+    const heldCoins = Array.from(new Set([...openTrades.map((t) => t.coin), ...positions.filter((p) => !p.delisted).map((p) => p.coin)])).filter((c) => COIN_MAP[c]);
+    const exportCsv = () => {
+        const headers = ["coin", "side", "margin", "entry", "exit", "leverage", "fees", "status", "date", "notes"];
+        const rows = trades.map((t) => headers.map((h) => { var _a; return ((_a = t[h]) !== null && _a !== void 0 ? _a : ""); }).join(","));
+        const csv = [headers.join(","), ...rows].join("\n");
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "coinfolio_trades.csv";
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+    const tabs = [
+        { id: "dashboard", label: "Dashboard", Icon: Wallet },
+        { id: "trades", label: "Open Trades", Icon: Activity },
+        { id: "ledger", label: "Ledger", Icon: ArrowUpDown },
+        { id: "longterm", label: "Long-Term", Icon: Layers },
+        { id: "goals", label: "Goals", Icon: Target },
+    ];
+    return (React.createElement("div", { className: "min-h-screen w-full flex flex-col", style: { background: C.void } },
+        React.createElement("style", null, `${FONT_IMPORT} * { box-sizing: border-box; } input[type=checkbox]{accent-color:${C.accent};}`),
+        React.createElement(TickerStrip, { prices: prices, coins: heldCoins, loading: loading }),
+        React.createElement("header", { className: "flex items-center justify-between px-5 py-4 border-b", style: { borderColor: C.hair } },
+            React.createElement("div", { className: "flex items-center gap-2.5" },
+                React.createElement("div", { className: "w-7 h-7 rounded-full flex items-center justify-center", style: { background: "#F7931A" } },
+                    React.createElement("span", { style: { fontFamily: "Georgia, serif", fontWeight: 700, fontSize: 15, color: "#fff" } }, "\u20BF")),
+                React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 17, fontWeight: 600, color: C.text, letterSpacing: "-0.01em" } },
+                    "Coinfolio ",
+                    React.createElement("span", { style: { color: C.gold, fontSize: 11, fontWeight: 500 } }, "\u00B7 history loaded"))),
+            React.createElement(Button, { variant: "ghost", onClick: exportCsv },
+                React.createElement(Download, { size: 14 }),
+                " Export CSV")),
+        React.createElement("nav", { className: "flex gap-1 px-5 pt-4 overflow-x-auto" }, tabs.map((tItem) => {
+            const Icon = tItem.Icon;
+            const active = tab === tItem.id;
+            return (React.createElement("button", { key: tItem.id, onClick: () => setTab(tItem.id), className: "flex items-center gap-1.5 px-3.5 py-2 rounded-t-md text-sm font-medium whitespace-nowrap", style: { fontFamily: "Inter", color: active ? C.text : C.muted, background: active ? C.panel : "transparent", border: `1px solid ${active ? C.hair : "transparent"}`, borderBottom: active ? `1px solid ${C.panel}` : "1px solid transparent", marginBottom: -1 } },
+                React.createElement(Icon, { size: 14 }),
+                " ",
+                tItem.label));
+        })),
+        React.createElement("main", { className: "flex-1 px-5 pb-10", style: { borderTop: `1px solid ${C.hair}` } },
+            React.createElement("div", { className: "pt-5 flex flex-col gap-4 max-w-6xl mx-auto w-full" },
+                fetchError && React.createElement("div", { className: "flex items-center gap-2 px-3 py-2 rounded", style: { background: C.goldDim, border: `1px solid ${C.gold}55` } },
+                    React.createElement(AlertCircle, { size: 14, color: C.gold }),
+                    React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.gold } }, fetchError)),
+                tab === "dashboard" && React.createElement(Dashboard, { trades: trades, prices: prices, overrides: overrides, setOverride: setOverride, onRefresh: fetchPrices, loading: loading, updatedAt: updatedAt, ledgerBalance: ledgerBalance, longTermValue: longTermValue }),
+                tab === "trades" && (React.createElement("div", { className: "flex flex-col gap-4" },
+                    React.createElement("div", { className: "flex items-center justify-between" },
+                        React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Open trade log"),
+                        !showForm && React.createElement(Button, { variant: "primary", onClick: () => { setEditing(null); setShowForm(true); } },
+                            React.createElement(Plus, { size: 14 }),
+                            " Add trade")),
+                    showForm && React.createElement(TradeForm, { initial: editing, onSave: saveTrade, onCancel: () => { setShowForm(false); setEditing(null); }, prices: prices }),
+                    React.createElement(TradesTable, { trades: openTrades, prices: prices, onEdit: (t) => { setEditing(t); setShowForm(true); }, onDelete: deleteTrade }))),
+                tab === "ledger" && React.createElement(LedgerTab, { ledger: ledger, setLedger: setLedger, ledgerSettings: ledgerSettings, setLedgerSettings: setLedgerSettings, onImportHistory: importHistory, hasImported: hasImportedHistory, longTermCash: longTermCash, setLongTermCash: setLongTermCash, prices: prices }),
+                tab === "longterm" && React.createElement(LongTermTab, { positions: positions, setPositions: setPositions, prices: prices, transfers: transfers, setTransfers: setTransfers, ledgerByCoin: ledgerByCoin, ledgerAutoSweep: ledgerAutoSweep, legacy: legacy, setLegacy: setLegacy, onImportHistory: importHistory, hasImported: hasImportedHistory, cash: longTermCash, setCash: setLongTermCash }),
+                tab === "goals" && React.createElement(GoalsTab, { goals: goals, setGoals: setGoals, currentPortfolioValue: netWorth }))),
+        React.createElement("footer", { className: "px-5 py-4 border-t text-center", style: { borderColor: C.hair } },
+            React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved in this browser only."))));
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
+
+</script>
+</body>
+</html>
