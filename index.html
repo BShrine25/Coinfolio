@@ -246,24 +246,29 @@ const fmtUsd = (n, opts = {}) => {
 const fmtPct = (n) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : (n > 0 ? "+" : "") + n.toFixed(2) + "%";
 const fmtQty = (n) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : n.toLocaleString(undefined, { maximumFractionDigits: 6 });
 function isClosed(t) { return t.status === "closed"; }
-// Open Trades share the margin/entry/exit/leverage model with the Ledger,
-// plus fees (which the Ledger doesn't track — fees get netted in before
-// the auto-synced Ledger entry is created).
+function sumFees(fees) {
+    return (fees || []).reduce((s, f) => s + (Number(f.value) || 0), 0);
+}
+// Open Trades share the margin/entry/exit model with the Ledger, plus fees
+// (which the Ledger doesn't track — fees get netted in before the
+// auto-synced Ledger entry is created). Once a trade is closed, leverage
+// stops being tracked separately (it can fluctuate mid-trade on cross-margin
+// exchanges) — the position size is just entered directly as Total margin.
 function computeTrade(t, livePrice) {
-    const margin = Number(t.margin) || 0;
-    const leverage = Number(t.leverage) || 1;
-    const entry = Number(t.entry) || 0;
-    const fees = Number(t.fees) || 0;
-    const notional = margin * leverage;
-    const qty = entry ? notional / entry : 0;
     const closed = isClosed(t);
+    const effLeverage = closed ? 1 : (Number(t.leverage) || 1);
+    const marginBase = closed ? (Number(t.totalMargin) || 0) : (Number(t.margin) || 0);
+    const entry = Number(t.entry) || 0;
+    const totalFees = sumFees(t.fees);
+    const notional = marginBase * effLeverage;
+    const qty = entry ? notional / entry : 0;
     const price = closed ? (Number(t.exit) || 0) : (livePrice !== null && livePrice !== void 0 ? livePrice : (Number(t.exit) || 0));
     const currentValue = qty * price;
     const raw = t.side === "short" ? notional - currentValue : currentValue - notional;
-    const netGain = raw - fees;
-    const netPayout = margin + netGain;
-    const pnlPct = margin !== 0 ? (netGain / margin) * 100 : 0;
-    return { closed, notional, qty, currentValue, netGain, netPayout, pnlPct };
+    const netGain = raw - totalFees;
+    const netPayout = marginBase + netGain;
+    const pnlPct = marginBase !== 0 ? (netGain / marginBase) * 100 : 0;
+    return { closed, notional, qty, currentValue, netGain, netPayout, pnlPct, totalFees, marginBase };
 }
 /* ---------------------------------------------------------------
    Ledger helpers — date grouping + pace-to-goal
@@ -396,7 +401,7 @@ function TickerStrip({ prices, coins, loading }) {
 /* =================================================================
    SPOT TRADES (generic buy/sell log)
 ================================================================= */
-const emptyTrade = () => ({ id: null, coin: "BTC", side: "long", margin: "", entry: "", exit: "", leverage: "10", fees: "", status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
+const emptyTrade = () => ({ id: null, coin: "BTC", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
 function TradeForm({ initial, onSave, onCancel, prices }) {
     var _a;
     const [t, setT] = useState(initial || emptyTrade());
@@ -407,14 +412,30 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
         if (livePrice && !manualExit)
             set("exit", livePrice);
     }, [livePrice, t.coin]); // eslint-disable-line
-    const preview = computeTrade({ ...t, margin: t.margin || 0, entry: t.entry || 0, exit: t.exit || 0, fees: t.fees || 0, leverage: t.leverage || 1 }, livePrice);
+    const setStatus = (status) => {
+        if (status === "closed" && !t.totalMargin) {
+            const suggested = (Number(t.margin) || 0) * (Number(t.leverage) || 1);
+            setT((p) => ({ ...p, status, totalMargin: suggested ? String(suggested) : "" }));
+        }
+        else {
+            set("status", status);
+        }
+    };
+    const setFee = (id, val) => setT((p) => ({ ...p, fees: p.fees.map((f) => (f.id === id ? { ...f, value: val } : f)) }));
+    const addFee = () => setT((p) => ({ ...p, fees: [...p.fees, { id: uid(), value: "" }] }));
+    const removeFee = (id) => setT((p) => ({ ...p, fees: p.fees.filter((f) => f.id !== id) }));
+    const preview = computeTrade({ ...t, margin: t.margin || 0, totalMargin: t.totalMargin || 0, entry: t.entry || 0, exit: t.exit || 0, leverage: t.leverage || 1 }, livePrice);
+    const totalFees = sumFees(t.fees);
     const submit = () => {
-        if (!t.margin || Number(t.margin) <= 0 || !t.entry)
+        const marginOk = isClosed(t) ? (t.totalMargin && Number(t.totalMargin) > 0) : (t.margin && Number(t.margin) > 0);
+        if (!marginOk || !t.entry)
             return;
         onSave({
             ...t, id: t.id || uid(),
-            margin: Number(t.margin), entry: Number(t.entry), exit: t.exit === "" ? 0 : Number(t.exit),
-            leverage: Number(t.leverage) || 1, fees: Number(t.fees) || 0,
+            margin: Number(t.margin) || 0, totalMargin: Number(t.totalMargin) || 0,
+            entry: Number(t.entry), exit: t.exit === "" ? 0 : Number(t.exit),
+            leverage: Number(t.leverage) || 1,
+            fees: t.fees.map((f) => ({ id: f.id, value: Number(f.value) || 0 })),
         });
     };
     return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
@@ -425,21 +446,35 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
                 React.createElement(Select, { value: t.side, onChange: (e) => set("side", e.target.value) },
                     React.createElement("option", { value: "long" }, "Long"),
                     React.createElement("option", { value: "short" }, "Short"))),
-            React.createElement(Field, { label: "Margin ($)" },
-                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.margin, onChange: (e) => set("margin", e.target.value) })),
-            React.createElement(Field, { label: "Leverage" },
-                React.createElement(TextInput, { type: "number", min: "1", step: "0.1", value: t.leverage, onChange: (e) => set("leverage", e.target.value) }))),
+            isClosed(t) ? (React.createElement(Field, { label: "Total margin ($)", hint: "Full position size \u2014 leverage already baked in", className: "md:col-span-2" },
+                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.totalMargin, onChange: (e) => set("totalMargin", e.target.value) }))) : (React.createElement(React.Fragment, null,
+                React.createElement(Field, { label: "Margin ($)" },
+                    React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.margin, onChange: (e) => set("margin", e.target.value) })),
+                React.createElement(Field, { label: "Leverage" },
+                    React.createElement(TextInput, { type: "number", min: "1", step: "0.1", value: t.leverage, onChange: (e) => set("leverage", e.target.value) }))))),
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Entry price ($)" },
                 React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.entry, onChange: (e) => set("entry", e.target.value) })),
             React.createElement(Field, { label: "Current / close price ($)", hint: livePrice ? "Live — edit to lock in your exit" : "No live feed, enter manually" },
                 React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.exit, onChange: (e) => { setManualExit(true); set("exit", e.target.value); } })),
-            React.createElement(Field, { label: "Fees ($)" },
-                React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.fees, onChange: (e) => set("fees", e.target.value) })),
-            React.createElement(Field, { label: "Status" },
-                React.createElement(Select, { value: t.status, onChange: (e) => set("status", e.target.value) },
+            React.createElement(Field, { label: "Status", className: "md:col-span-2" },
+                React.createElement(Select, { value: t.status, onChange: (e) => setStatus(e.target.value) },
                     React.createElement("option", { value: "open" }, "Open"),
                     React.createElement("option", { value: "closed" }, "Closed")))),
+        React.createElement(Field, { label: "Fees ($)", hint: "Add as many as you need \u2014 a negative entry (a rebate) reduces your total cost" },
+            React.createElement("div", { className: "flex flex-col gap-2" },
+                t.fees.length === 0 && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.faint } }, "No fees added yet."),
+                t.fees.map((f) => {
+                    const v = Number(f.value) || 0;
+                    return (React.createElement("div", { key: f.id, className: "flex items-center gap-2" },
+                        React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: f.value, onChange: (e) => setFee(f.id, e.target.value), style: { color: v < 0 ? C.gain : C.text }, className: "flex-1" }),
+                        v < 0 && React.createElement(Badge, { tone: "gain" }, "rebate"),
+                        React.createElement("button", { onClick: () => removeFee(f.id), style: { color: C.muted }, className: "hover:text-red-400" },
+                            React.createElement(X, { size: 14 }))));
+                }),
+                React.createElement(Button, { variant: "ghost", onClick: addFee, className: "self-start" },
+                    React.createElement(Plus, { size: 13 }),
+                    " Add fee"))),
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Date" },
                 React.createElement(TextInput, { type: "date", value: t.date, onChange: (e) => set("date", e.target.value) })),
@@ -452,6 +487,9 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
                 "(",
                 fmtPct(preview.pnlPct),
                 ")"),
+            totalFees !== 0 && React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: totalFees < 0 ? C.gain : C.faint } },
+                "Fees ",
+                fmtUsd(totalFees)),
             t.status === "closed" && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.violet } }, "\u2192 syncs to Ledger automatically")),
         React.createElement("div", { className: "flex gap-2 justify-end pt-1" },
             React.createElement(Button, { variant: "ghost", onClick: onCancel },
@@ -498,7 +536,7 @@ function OpenTradeRow({ t, price, onEdit, onDelete }) {
                 React.createElement("span", { style: { color: C.faint } }, "Notional"),
                 React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(c.notional)),
                 React.createElement("span", { style: { color: C.faint } }, "Fees"),
-                React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(Number(t.fees) || 0)),
+                React.createElement("span", { style: { color: c.totalFees < 0 ? C.gain : C.text, textAlign: "right" } }, fmtUsd(c.totalFees)),
                 React.createElement("span", { style: { color: C.faint } }, "Current value"),
                 React.createElement("span", { style: { color: C.text, textAlign: "right" } }, fmtUsd(c.currentValue)),
                 React.createElement("span", { style: { color: C.faint } }, "Date opened"),
@@ -525,7 +563,7 @@ function Dashboard({ trades, prices, overrides, setOverride, onRefresh, loading,
     const open = trades.filter((t) => !isClosed(t));
     const closed = trades.filter(isClosed);
     const totalRealized = closed.reduce((s, t) => s + computeTrade(t, prices[COIN_MAP[t.coin]]).netGain, 0);
-    const totalFees = trades.reduce((s, t) => s + (Number(t.fees) || 0), 0);
+    const totalFees = trades.reduce((s, t) => s + sumFees(t.fees), 0);
     const totalInvestedOpen = open.reduce((s, t) => s + (Number(t.margin) || 0), 0);
     const holdingsMap = {};
     open.forEach((t) => {
@@ -1148,10 +1186,6 @@ function GoalsTab({ goals, setGoals, currentPortfolioValue }) {
    APP
 ================================================================= */
 function App() {
-    // Title only — the actual favicon / apple-touch-icon are set as static
-    // <link> tags in the page <head>, not injected here. iOS's "Add to
-    // Home Screen" needs a real PNG present at load time, not a
-    // JS-injected data-URI SVG, or it silently falls back to a screenshot.
     useEffect(() => {
         document.title = "Coinfolio · history loaded";
     }, []);
@@ -1325,8 +1359,8 @@ function App() {
     const netWorth = spotValue + ledgerBalance + longTermValue + legacyTotal;
     const heldCoins = Array.from(new Set([...openTrades.map((t) => t.coin), ...positions.filter((p) => !p.delisted).map((p) => p.coin)])).filter((c) => COIN_MAP[c]);
     const exportCsv = () => {
-        const headers = ["coin", "side", "margin", "entry", "exit", "leverage", "fees", "status", "date", "notes"];
-        const rows = trades.map((t) => headers.map((h) => { var _a; return ((_a = t[h]) !== null && _a !== void 0 ? _a : ""); }).join(","));
+        const headers = ["coin", "side", "margin", "totalMargin", "entry", "exit", "leverage", "fees", "status", "date", "notes"];
+        const rows = trades.map((t) => headers.map((h) => { var _a; return (h === "fees" ? sumFees(t.fees) : ((_a = t[h]) !== null && _a !== void 0 ? _a : "")); }).join(","));
         const csv = [headers.join(","), ...rows].join("\n");
         const blob = new Blob([csv], { type: "text/csv" });
         const url = URL.createObjectURL(blob);
@@ -1382,7 +1416,7 @@ function App() {
                 tab === "longterm" && React.createElement(LongTermTab, { positions: positions, setPositions: setPositions, prices: prices, transfers: transfers, setTransfers: setTransfers, ledgerByCoin: ledgerByCoin, ledgerAutoSweep: ledgerAutoSweep, legacy: legacy, setLegacy: setLegacy, onImportHistory: importHistory, hasImported: hasImportedHistory, cash: longTermCash, setCash: setLongTermCash }),
                 tab === "goals" && React.createElement(GoalsTab, { goals: goals, setGoals: setGoals, currentPortfolioValue: netWorth }))),
         React.createElement("footer", { className: "px-5 py-4 border-t text-center", style: { borderColor: C.hair } },
-            React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved in this browser only."))));
+            React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
 
