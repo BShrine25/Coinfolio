@@ -1467,20 +1467,16 @@ function AppRoot() {
 ================================================================= */
 function App({ onSignOut, userEmail }) {
     useEffect(() => {
-        document.title = "Coinfolio · history loaded";
+        document.title = "Coinfolio";
     }, []);
     const [tab, setTab] = useState("dashboard");
     const [trades, setTrades] = useState([]);
-    const [ledger, setLedger] = useState(() => HISTORICAL_LEDGER.map((e) => ({ ...e, id: uid() })));
+    const [ledger, setLedger] = useState([]);
     const [ledgerSettings, setLedgerSettings] = useState({ target: "500000", positionPct: "50", leverage: "10", targetGainPct: "1", pullFraction: "50" });
-    const [positions, setPositions] = useState(() => HISTORICAL_POSITIONS.map((p) => ({ ...p, id: uid(), customCoin: "", delisted: false, notes: "" })));
+    const [positions, setPositions] = useState([]);
     const [transfers, setTransfers] = useState([]);
-    const [legacy, setLegacy] = useState(() => HISTORICAL_LEGACY.map((v) => ({ id: uid(), value: v })));
-    const [longTermCash, setLongTermCash] = useState(() => {
-        const totalSwept = HISTORICAL_LEDGER.reduce((s, e) => s + ledgerSweep(e, 50), 0);
-        const totalMargin = HISTORICAL_POSITIONS.reduce((s, p) => s + p.margin, 0);
-        return String(Math.round((totalSwept - totalMargin) * 100) / 100);
-    });
+    const [legacy, setLegacy] = useState([]);
+    const [longTermCash, setLongTermCash] = useState("");
     const [goals, setGoals] = useState([]);
     const [overrides, setOverrides] = useState({});
     const [prices, setPrices] = useState({});
@@ -1718,9 +1714,7 @@ function App({ onSignOut, userEmail }) {
             React.createElement("div", { className: "flex items-center gap-2.5" },
                 React.createElement("div", { className: "w-7 h-7 rounded-full flex items-center justify-center", style: { background: "#F7931A" } },
                     React.createElement("span", { style: { fontFamily: "Georgia, serif", fontWeight: 700, fontSize: 15, color: "#fff" } }, "\u20BF")),
-                React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 17, fontWeight: 600, color: C.text, letterSpacing: "-0.01em" } },
-                    "Coinfolio ",
-                    React.createElement("span", { style: { color: C.gold, fontSize: 11, fontWeight: 500 } }, "\u00B7 history loaded"))),
+                React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 17, fontWeight: 600, color: C.text, letterSpacing: "-0.01em" } }, "Coinfolio")),
             React.createElement("div", { className: "flex items-center gap-2" },
                 importMsg && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: importMsg.ok ? C.gain : C.loss } }, importMsg.text),
                 React.createElement("input", { ref: fileInputRef, type: "file", accept: "application/json", style: { display: "none" }, onChange: (e) => { if (e.target.files[0])
