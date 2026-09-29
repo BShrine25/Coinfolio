@@ -37,6 +37,7 @@
 
 
 
+
 "use strict";
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 /* ---------------------------------------------------------------
@@ -101,7 +102,9 @@ let CUSTOM_COINS = {}; // { SYMBOL: coingeckoId }
 // Free CoinGecko Demo API key — keyless access started getting blocked by
 // their CDN, so every call now authenticates with this instead.
 const COINGECKO_API_KEY = "CG-er9JRb21kt1zed6FYuoDsb23";
-const COINGECKO_HEADERS = { "x-cg-demo-api-key": COINGECKO_API_KEY };
+// Passed as a URL param (not a custom header) so the browser doesn't
+// trigger a CORS preflight that CoinGecko's demo tier may not handle
+// cleanly for cross-origin, browser-based requests.
 function coinIdFor(symbol) { return CUSTOM_COINS[symbol] || COIN_MAP[symbol] || null; }
 function allCoinSymbols() { return Array.from(new Set([...COIN_LIST, ...Object.keys(CUSTOM_COINS)])).sort(); }
 function registerCustomCoin(symbol, coingeckoId) {
@@ -110,7 +113,7 @@ function registerCustomCoin(symbol, coingeckoId) {
 }
 async function searchCoinGecko(query) {
     try {
-        const res = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`, { headers: COINGECKO_HEADERS });
+        const res = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}&x_cg_demo_api_key=${COINGECKO_API_KEY}`);
         const data = await res.json();
         return (data.coins || []).slice(0, 6);
     }
@@ -1169,7 +1172,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
             return;
         setFetchingId(p.id);
         try {
-            const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`, { headers: COINGECKO_HEADERS });
+            const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false&x_cg_demo_api_key=${COINGECKO_API_KEY}`);
             const data = await res.json();
             const ath = (_b = (_a = data === null || data === void 0 ? void 0 : data.market_data) === null || _a === void 0 ? void 0 : _a.ath) === null || _b === void 0 ? void 0 : _b.usd;
             if (ath)
@@ -1715,7 +1718,7 @@ function App({ onSignOut, userEmail }) {
         const errors = [];
         await Promise.all(chunks.map(async (chunk) => {
             try {
-                const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${chunk.join(",")}&vs_currencies=usd`, { headers: COINGECKO_HEADERS });
+                const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${chunk.join(",")}&vs_currencies=usd&x_cg_demo_api_key=${COINGECKO_API_KEY}`);
                 if (!res.ok) {
                     let bodyText = "";
                     try { bodyText = await res.text(); } catch (e2) { /* ignore */ }
@@ -1951,6 +1954,7 @@ function App({ onSignOut, userEmail }) {
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
+
 
 
 
