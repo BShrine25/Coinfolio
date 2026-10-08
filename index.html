@@ -40,6 +40,7 @@
 
 
 
+
 "use strict";
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 /* ---------------------------------------------------------------
@@ -1198,10 +1199,14 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     };
     const deletePosition = (id) => setPositions((prev) => prev.filter((p) => p.id !== id));
     const togglePause = (p) => savePosition({ ...p, paused: !p.paused });
+    const [viewAccount, setViewAccount] = useState("total");
+    // Which account's book we're looking at — "total" combines both.
+    // Everything below (cards, list, projections) is scoped to this.
+    const viewPositions = viewAccount === "total" ? positions : positions.filter((p) => (p.account || "phemex") === viewAccount);
     // Paused positions ("sold, tracking a future re-buy") stay visible but
     // drop out of every total below, same treatment as if they weren't
     // held at all right now.
-    const activePositions = positions.filter((p) => !p.paused);
+    const activePositions = viewPositions.filter((p) => !p.paused);
     const fetchAth = async (p) => {
         var _a, _b;
         const coinId = coinIdFor(p.coin);
@@ -1229,7 +1234,9 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
         return s + (p.margin + pnl); // equity, not notional exposure
     }, 0);
     const cashAmount = Number(cash) || 0;
-    const totalValue = positionsEquity + cashAmount;
+    // Uninvested cash isn't attributed to either exchange, so it only
+    // folds into the total when viewing both accounts combined.
+    const totalValue = positionsEquity + (viewAccount === "total" ? cashAmount : 0);
     const manualTransfers = transfers.reduce((s, t) => s + t.amount, 0);
     const legacyTotal = legacy.reduce((s, l) => s + l.value, 0);
     const totalTransfers = manualTransfers + ledgerAutoSweep;
@@ -1256,7 +1263,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     const missingAthCount = activePositions.length - positionsWithAth.length;
     // Ordered by leverage (highest first), alphabetical by coin within each
     // leverage tier — paused positions always sink to the very bottom.
-    const sortedPositions = [...positions].sort((a, b) => (Number(!!a.paused) - Number(!!b.paused)) || (Number(b.leverage) - Number(a.leverage)) || a.coin.localeCompare(b.coin));
+    const sortedPositions = [...viewPositions].sort((a, b) => (Number(!!a.paused) - Number(!!b.paused)) || (Number(b.leverage) - Number(a.leverage)) || a.coin.localeCompare(b.coin));
     const addTransfer = () => {
         if (!transferAmount || Number(transferAmount) <= 0)
             return;
@@ -1272,8 +1279,13 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
             React.createElement(Button, { variant: "gold", onClick: onImportHistory },
                 React.createElement(Zap, { size: 14 }),
                 " Import now"))),
+        React.createElement("div", { className: "relative inline-block self-start" },
+            React.createElement("select", { value: viewAccount, onChange: (e) => setViewAccount(e.target.value), className: "appearance-none pr-8 pl-0 py-1 outline-none cursor-pointer", style: { fontFamily: "Space Grotesk", fontSize: 20, fontWeight: 700, color: C.text, background: "transparent", border: "none" } },
+                React.createElement("option", { value: "total", style: { background: C.panel } }, "Total \u2014 all accounts"),
+                ACCOUNTS.map((a) => React.createElement("option", { key: a.id, value: a.id, style: { background: C.panel } }, a.label))),
+            React.createElement(ChevronRight, { size: 16, color: C.muted, style: { position: "absolute", right: 2, top: "50%", transform: "translateY(-50%) rotate(90deg)", pointerEvents: "none" } })),
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
-            React.createElement(SummaryCard, { label: "Total value", value: fmtUsd(totalValue), sub: "Invested equity + uninvested cash" }),
+            React.createElement(SummaryCard, { label: "Total value", value: fmtUsd(totalValue), sub: viewAccount === "total" ? "Invested equity + uninvested cash" : "Invested equity for this account" }),
             React.createElement(SummaryCard, { label: "Total margin committed", value: fmtUsd(totalMargin), sub: marginAt1x > 0 ? `${fmtUsd(marginAt1x)} in 1x trades` : undefined }),
             React.createElement(SummaryCard, { label: "Total transferred in", value: fmtUsd(totalTransfers), tone: "gold", sub: `${fmtUsd(ledgerAutoSweep)} auto from ledger + ${fmtUsd(manualTransfers)} manual` }),
             React.createElement(SummaryCard, { label: "Legacy (delisted)", value: fmtUsd(legacyTotal), sub: `${legacy.length} entries` })),
@@ -1291,31 +1303,10 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
             !showForm && React.createElement(Button, { variant: "primary", onClick: () => { setEditing(null); setShowForm(true); } },
                 React.createElement(Plus, { size: 14 }),
                 " Add position")),
-        showForm && React.createElement(PositionForm, { initial: editing, onSave: savePosition, onCancel: () => { setShowForm(false); setEditing(null); } }),
-        positions.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
-            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-5" }, ACCOUNTS.map((acc) => {
-            const items = sortedPositions.filter((p) => (p.account || "phemex") === acc.id);
-            if (!items.length)
-                return null;
-            const accMargin = items.filter((p) => !p.paused).reduce((s, p) => s + p.margin, 0);
-            const accEquity = items.filter((p) => !p.paused).reduce((s, p) => {
-                var _a;
-                const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
-                const notional = p.margin * p.leverage;
-                const qty = p.entry ? notional / p.entry : 0;
-                return s + (p.margin + (qty * price - notional));
-            }, 0);
-            return (React.createElement("div", { key: acc.id, className: "flex flex-col gap-2" },
-                React.createElement("div", { className: "flex items-center justify-between" },
-                    React.createElement("div", { className: "flex items-center gap-2" },
-                        React.createElement(AccountBadge, { account: acc.id }),
-                        React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } },
-                            items.length, " position", items.length === 1 ? "" : "s")),
-                    React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.faint } },
-                        fmtUsd(accMargin), " margin \u00b7 ", fmtUsd(accEquity), " equity")),
-                items.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause })))));
-        }))),
-        positions.length > 0 && (React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
+        showForm && React.createElement(PositionForm, { initial: editing || (viewAccount !== "total" ? { ...emptyPosition(), account: viewAccount } : null), onSave: savePosition, onCancel: () => { setShowForm(false); setEditing(null); } }),
+        viewPositions.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, viewAccount === "total" ? "No long-term positions yet." : `No ${ACCOUNTS.find((a) => a.id === viewAccount).label} positions yet.`))) : (React.createElement("div", { className: "flex flex-col gap-2" }, sortedPositions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause }))))),
+        viewPositions.length > 0 && (React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
             React.createElement(SummaryCard, { label: "Total at 5x entry", value: fmtUsd(totalAt5x), tone: totalAt5x >= 0 ? "gold" : "loss" }),
             React.createElement(SummaryCard, { label: "Total at 10x entry", value: fmtUsd(totalAt10x), tone: totalAt10x >= 0 ? "gold" : "loss" }),
             React.createElement(SummaryCard, { label: "Total at ATH", value: fmtUsd(totalAtAth), tone: totalAtAth >= 0 ? "gold" : "loss", sub: missingAthCount > 0 ? `${missingAthCount} position${missingAthCount === 1 ? "" : "s"} without an ATH set` : undefined }))),
@@ -2014,6 +2005,7 @@ function App({ onSignOut, userEmail }) {
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
+
 
 
 
