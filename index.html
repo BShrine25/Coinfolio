@@ -38,6 +38,7 @@
 
 
 
+
 "use strict";
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 /* ---------------------------------------------------------------
@@ -62,6 +63,8 @@ const ArrowUpDown = (p) => React.createElement(Icon, { ...p, path: "M7 17V3M3 7l
 const DollarSign = (p) => React.createElement(Icon, { ...p, path: "M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" });
 const Zap = (p) => React.createElement(Icon, { ...p, path: "M13 2L3 14h9l-1 8 10-12h-9l1-8z" });
 const ChevronRight = (p) => React.createElement(Icon, { ...p, path: "M9 18l6-6-6-6" });
+const Pause = (p) => React.createElement(Icon, { ...p, path: "M10 4H6v16h4V4zM18 4h-4v16h4V4z" });
+const Play = (p) => React.createElement(Icon, { ...p, path: "M5 3l14 9-14 9V3z" });
 /* ---------------------------------------------------------------
    THEME
 ---------------------------------------------------------------- */
@@ -1031,7 +1034,7 @@ function LedgerTab({ ledger, setLedger, ledgerSettings, setLedgerSettings, onImp
 /* =================================================================
    LONG-TERM PORTFOLIO
 ================================================================= */
-const emptyPosition = () => ({ id: null, coin: "BTC", customCoin: "", margin: "", leverage: "3", entry: "", mark: "", liquidation: "", ath: "", delisted: false, notes: "" });
+const emptyPosition = () => ({ id: null, coin: "BTC", customCoin: "", margin: "", leverage: "3", entry: "", mark: "", liquidation: "", ath: "", delisted: false, paused: false, notes: "" });
 function PositionForm({ initial, onSave, onCancel }) {
     const [p, setP] = useState(initial || emptyPosition());
     const set = (k, v) => setP((prev) => ({ ...prev, [k]: v }));
@@ -1078,7 +1081,7 @@ function PositionForm({ initial, onSave, onCancel }) {
                 React.createElement(Check, { size: 14 }),
                 " Save position"))));
 }
-function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAth, fetchingAth }) {
+function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAth, fetchingAth, onTogglePause }) {
     const [expanded, setExpanded] = useState(false);
     const notional = p.margin * p.leverage;
     const qty = p.entry ? notional / p.entry : 0;
@@ -1090,7 +1093,7 @@ function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAt
     const athPnl = p.ath ? qty * p.ath - notional : null;
     const pnlAt5x = qty * p.entry * 5 - notional;
     const pnlAt10x = qty * p.entry * 10 - notional;
-    return (React.createElement(Panel, { style: { overflow: "hidden" } },
+    return (React.createElement(Panel, { style: { overflow: "hidden", opacity: p.paused ? 0.5 : 1 } },
         React.createElement("button", { onClick: () => setExpanded((v) => !v), className: "w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.02]", style: { background: "transparent", border: "none", cursor: "pointer" } },
             React.createElement("div", { className: "flex items-center gap-2.5" },
                 React.createElement(ChevronRight, { size: 14, color: C.faint, style: { transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }),
@@ -1098,14 +1101,19 @@ function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAt
                 React.createElement(Badge, { tone: "violet" },
                     p.leverage,
                     "x"),
-                p.delisted && React.createElement(Badge, { tone: "muted" }, "Delisted")),
+                p.delisted && React.createElement(Badge, { tone: "muted" }, "Delisted"),
+                p.paused && React.createElement(Badge, { tone: "gold" }, "Paused — tracking re-buy")),
             React.createElement("div", { className: "flex items-center gap-4", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
                 React.createElement("span", { style: { color: C.faint }, className: "hidden sm:inline" },
                     "Equity ",
                     fmtUsd(equity)),
                 React.createElement("span", { style: { color: pnl >= 0 ? C.gain : C.loss, fontWeight: 600 } }, fmtPct(pnlPct)))),
         expanded && (React.createElement("div", { className: "flex flex-col gap-3 px-4 pb-4", style: { borderTop: `1px solid ${C.hair}` } },
+            p.paused && React.createElement("p", { style: { fontFamily: "Inter", fontSize: 11, color: C.gold } }, "Paused — excluded from all totals until resumed. Figures below still update so you can see what buying back in now would cost."),
             React.createElement("div", { className: "flex justify-end gap-2 pt-3" },
+                React.createElement(Button, { variant: "ghost", onClick: () => onTogglePause(p) },
+                    p.paused ? React.createElement(Play, { size: 13 }) : React.createElement(Pause, { size: 13 }),
+                    p.paused ? " Resume" : " Pause"),
                 React.createElement(Button, { variant: "ghost", onClick: () => onEdit(p) },
                     React.createElement(Pencil, { size: 13 }),
                     " Edit"),
@@ -1165,6 +1173,11 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
         setEditing(null);
     };
     const deletePosition = (id) => setPositions((prev) => prev.filter((p) => p.id !== id));
+    const togglePause = (p) => savePosition({ ...p, paused: !p.paused });
+    // Paused positions ("sold, tracking a future re-buy") stay visible but
+    // drop out of every total below, same treatment as if they weren't
+    // held at all right now.
+    const activePositions = positions.filter((p) => !p.paused);
     const fetchAth = async (p) => {
         var _a, _b;
         const coinId = coinIdFor(p.coin);
@@ -1181,9 +1194,9 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
         catch (e) { /* silent — user can enter manually */ }
         setFetchingId(null);
     };
-    const totalMargin = positions.reduce((s, p) => s + p.margin, 0);
-    const marginAt1x = positions.reduce((s, p) => s + (Number(p.leverage) === 1 ? p.margin : 0), 0);
-    const positionsEquity = positions.reduce((s, p) => {
+    const totalMargin = activePositions.reduce((s, p) => s + p.margin, 0);
+    const marginAt1x = activePositions.reduce((s, p) => s + (Number(p.leverage) === 1 ? p.margin : 0), 0);
+    const positionsEquity = activePositions.reduce((s, p) => {
         var _a;
         const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
         const notional = p.margin * p.leverage;
@@ -1199,25 +1212,27 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     // Projected totals if every position's price hit 5x / 10x / its ATH,
     // measured from entry price — not current price — same math as each
     // position's own "At 5x" / "At 10x" / "At ATH" figures, just summed.
-    const totalAt5x = positions.reduce((s, p) => {
+    // Paused positions are excluded, same as every other total here.
+    const totalAt5x = activePositions.reduce((s, p) => {
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
         return s + (qty * p.entry * 5 - notional);
     }, 0);
-    const totalAt10x = positions.reduce((s, p) => {
+    const totalAt10x = activePositions.reduce((s, p) => {
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
         return s + (qty * p.entry * 10 - notional);
     }, 0);
-    const positionsWithAth = positions.filter((p) => p.ath);
+    const positionsWithAth = activePositions.filter((p) => p.ath);
     const totalAtAth = positionsWithAth.reduce((s, p) => {
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
         return s + (qty * p.ath - notional);
     }, 0);
-    const missingAthCount = positions.length - positionsWithAth.length;
-    // Ordered by leverage (highest first), alphabetical by coin within each.
-    const sortedPositions = [...positions].sort((a, b) => (Number(b.leverage) - Number(a.leverage)) || a.coin.localeCompare(b.coin));
+    const missingAthCount = activePositions.length - positionsWithAth.length;
+    // Ordered by leverage (highest first), alphabetical by coin within each
+    // leverage tier — paused positions always sink to the very bottom.
+    const sortedPositions = [...positions].sort((a, b) => (Number(!!a.paused) - Number(!!b.paused)) || (Number(b.leverage) - Number(a.leverage)) || a.coin.localeCompare(b.coin));
     const addTransfer = () => {
         if (!transferAmount || Number(transferAmount) <= 0)
             return;
@@ -1254,7 +1269,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
                 " Add position")),
         showForm && React.createElement(PositionForm, { initial: editing, onSave: savePosition, onCancel: () => { setShowForm(false); setEditing(null); } }),
         positions.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
-            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-2" }, sortedPositions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id }))))),
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-2" }, sortedPositions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause }))))),
         positions.length > 0 && (React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
             React.createElement(SummaryCard, { label: "Total at 5x entry", value: fmtUsd(totalAt5x), tone: totalAt5x >= 0 ? "gold" : "loss" }),
             React.createElement(SummaryCard, { label: "Total at 10x entry", value: fmtUsd(totalAt10x), tone: totalAt10x >= 0 ? "gold" : "loss" }),
@@ -1809,7 +1824,7 @@ function App({ onSignOut, userEmail }) {
         return map;
     }, [ledger]);
     const longTermValue = useMemo(() => {
-        const positionsEquity = positions.reduce((s, p) => {
+        const positionsEquity = positions.filter((p) => !p.paused).reduce((s, p) => {
             var _a;
             const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
             const notional = p.margin * p.leverage;
@@ -1954,6 +1969,7 @@ function App({ onSignOut, userEmail }) {
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
+
 
 
 
