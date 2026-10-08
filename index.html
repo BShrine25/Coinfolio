@@ -39,6 +39,7 @@
 
 
 
+
 "use strict";
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 /* ---------------------------------------------------------------
@@ -445,6 +446,17 @@ function Badge({ children, tone = "muted" }) {
     const tones = { muted: { color: C.muted, background: "#8890A022" }, gain: { color: C.gain, background: C.gainDim }, loss: { color: C.loss, background: C.lossDim }, gold: { color: C.gold, background: C.goldDim }, violet: { color: C.violet, background: C.violetDim } };
     return React.createElement("span", { className: "px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wide", style: { ...tones[tone], fontFamily: "Inter" } }, children);
 }
+const ACCOUNTS = [
+    { id: "phemex", label: "Phemex" },
+    { id: "kcex", label: "KCEX" },
+];
+function AccountSelect({ value, onChange, className }) {
+    return (React.createElement(Select, { value: value || "phemex", onChange: (e) => onChange(e.target.value), className: className }, ACCOUNTS.map((a) => React.createElement("option", { key: a.id, value: a.id }, a.label))));
+}
+function AccountBadge({ account }) {
+    const acc = ACCOUNTS.find((a) => a.id === account) || ACCOUNTS[0];
+    return React.createElement(Badge, { tone: account === "kcex" ? "violet" : "muted" }, acc.label);
+}
 function SummaryCard({ label, value, sub, tone }) {
     const color = tone === "gain" ? C.gain : tone === "loss" ? C.loss : tone === "gold" ? C.gold : C.text;
     return (React.createElement(Panel, { style: { padding: 16 }, className: "flex flex-col gap-1.5" },
@@ -513,7 +525,7 @@ function TickerStrip({ prices, coins, loading }) {
 /* =================================================================
    SPOT TRADES (generic buy/sell log)
 ================================================================= */
-const emptyTrade = () => ({ id: null, coin: "BTC", customCoin: "", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], gain: "", status: "open", date: todayStr(), notes: "", ledgerEntryId: null });
+const emptyTrade = () => ({ id: null, coin: "BTC", customCoin: "", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], gain: "", status: "open", date: todayStr(), notes: "", ledgerEntryId: null, account: "phemex" });
 function TradeForm({ initial, onSave, onCancel, prices }) {
     var _a;
     const [t, setT] = useState(initial || emptyTrade());
@@ -580,9 +592,11 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
                         React.createElement("option", { value: "open" }, "Open"),
                         React.createElement("option", { value: "closed" }, "Closed")))),
             React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+                React.createElement(Field, { label: "Account" },
+                    React.createElement(AccountSelect, { value: t.account, onChange: (v) => set("account", v) })),
                 React.createElement(Field, { label: "Date" },
                     React.createElement(TextInput, { type: "date", value: t.date, onChange: (e) => set("date", e.target.value) })),
-                React.createElement(Field, { label: "Notes", className: "md:col-span-3" },
+                React.createElement(Field, { label: "Notes", className: "md:col-span-2" },
                     React.createElement(TextInput, { placeholder: "Optional", value: t.notes, onChange: (e) => set("notes", e.target.value) }))),
             t.gain !== "" && (React.createElement("div", { className: "flex items-center gap-4 px-3 py-2 rounded flex-wrap", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
                 React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: 600, color: (Number(t.gain) || 0) >= 0 ? C.gain : C.loss } }, fmtUsd(Number(t.gain) || 0)),
@@ -618,10 +632,12 @@ function TradeForm({ initial, onSave, onCancel, prices }) {
                 React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.entry, onChange: (e) => set("entry", e.target.value) })),
             React.createElement(Field, { label: "Current / close price ($)", hint: livePrice ? "Live — edit to lock in your exit" : "No live feed, enter manually" },
                 React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: t.exit, onChange: (e) => { setManualExit(true); set("exit", e.target.value); } })),
-            React.createElement(Field, { label: "Status", className: "md:col-span-2" },
+            React.createElement(Field, { label: "Status" },
                 React.createElement(Select, { value: t.status, onChange: (e) => setStatus(e.target.value) },
                     React.createElement("option", { value: "open" }, "Open"),
-                    React.createElement("option", { value: "closed" }, "Closed")))),
+                    React.createElement("option", { value: "closed" }, "Closed"))),
+            React.createElement(Field, { label: "Account" },
+                React.createElement(AccountSelect, { value: t.account, onChange: (v) => set("account", v) }))),
         React.createElement(Field, { label: "Fees ($)", hint: "Add as many as you need \u2014 a negative entry (a rebate) reduces your total cost" },
             React.createElement("div", { className: "flex flex-col gap-2" },
                 t.fees.length === 0 && React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.faint } }, "No fees added yet."),
@@ -671,6 +687,7 @@ function OpenTradeRow({ t, price, onEdit, onDelete }) {
                 React.createElement(ChevronRight, { size: 14, color: C.faint, style: { transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }),
                 React.createElement("span", { style: { fontFamily: "Space Grotesk", fontSize: 14, fontWeight: 700, color: C.text } }, t.coin),
                 React.createElement(Badge, { tone: t.side === "short" ? "loss" : "muted" }, t.side),
+                React.createElement(AccountBadge, { account: t.account }),
                 c.closed && React.createElement(Badge, { tone: "muted" }, "Closed")),
             React.createElement("div", { className: "flex items-center gap-4", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
                 !c.closed && React.createElement("span", { style: { color: C.faint }, className: "hidden sm:inline" },
@@ -804,7 +821,7 @@ function Dashboard({ trades, prices, overrides, setOverride, onRefresh, loading,
 /* =================================================================
    LEDGER (leverage compounding log)
 ================================================================= */
-const emptyLedgerEntry = () => ({ id: null, type: "deposit", date: todayStr(), depositAmount: "" });
+const emptyLedgerEntry = () => ({ id: null, type: "deposit", date: todayStr(), depositAmount: "", account: "phemex" });
 // Deposits only — trades are logged in Open Trades and sync here automatically.
 function LedgerEntryForm({ initial, onSave, onCancel, pullFraction }) {
     const [e, setE] = useState(initial || emptyLedgerEntry());
@@ -821,6 +838,8 @@ function LedgerEntryForm({ initial, onSave, onCancel, pullFraction }) {
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Deposit amount ($)", hint: "Full amount \u2014 split happens automatically" },
                 React.createElement(TextInput, { type: "number", step: "any", placeholder: "0.00", value: e.depositAmount, onChange: (ev) => set("depositAmount", ev.target.value) })),
+            React.createElement(Field, { label: "Account" },
+                React.createElement(AccountSelect, { value: e.account, onChange: (v) => set("account", v) })),
             React.createElement(Field, { label: "Date" },
                 React.createElement(TextInput, { type: "date", value: e.date, onChange: (ev) => set("date", ev.target.value) }))),
         previewAmount !== 0 && (React.createElement("div", { className: "flex items-center gap-4 px-3 py-2 rounded flex-wrap", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
@@ -854,7 +873,7 @@ function LedgerTable({ entries, onEdit, onDelete, pullFraction }) {
         React.createElement("div", { className: "overflow-x-auto" },
             React.createElement("table", { className: "w-full text-sm", style: { fontFamily: "JetBrains Mono" } },
                 React.createElement("thead", null,
-                    React.createElement("tr", { style: { borderBottom: `1px solid ${C.hair}` } }, ["#", "Date", "Type", "Coin", "Amount", "→ Ledger", "→ Long-term", "Balance", ""].map((h) => React.createElement("th", { key: h, className: "text-left px-3 py-2.5 whitespace-nowrap", style: { color: C.muted, fontFamily: "Inter", fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" } }, h)))),
+                    React.createElement("tr", { style: { borderBottom: `1px solid ${C.hair}` } }, ["#", "Date", "Type", "Coin", "Account", "Amount", "→ Ledger", "→ Long-term", "Balance", ""].map((h) => React.createElement("th", { key: h, className: "text-left px-3 py-2.5 whitespace-nowrap", style: { color: C.muted, fontFamily: "Inter", fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" } }, h)))),
                 React.createElement("tbody", null, rows.slice().reverse().map((r, i) => {
                     const color = r.type === "deposit" ? C.gold : r.delta > 0 ? C.gain : r.delta < 0 ? C.loss : C.muted;
                     const amount = r.type === "deposit" ? r.depositAmount : r.gain;
@@ -864,6 +883,8 @@ function LedgerTable({ entries, onEdit, onDelete, pullFraction }) {
                         React.createElement("td", { className: "px-3 py-2" },
                             React.createElement(Badge, { tone: r.type === "deposit" ? "gold" : "muted" }, r.type === "deposit" ? "Deposit" : (r.side || "long"))),
                         React.createElement("td", { className: "px-3 py-2", style: { color: C.text } }, r.coin || "—"),
+                        React.createElement("td", { className: "px-3 py-2" },
+                            React.createElement(AccountBadge, { account: r.account })),
                         React.createElement("td", { className: "px-3 py-2", style: { color: r.type === "deposit" ? C.gold : (r.gain >= 0 ? C.gain : C.loss) } }, fmtUsd(amount)),
                         React.createElement("td", { className: "px-3 py-2 font-semibold", style: { color } },
                             r.delta >= 0 ? "+" : "",
@@ -1034,7 +1055,7 @@ function LedgerTab({ ledger, setLedger, ledgerSettings, setLedgerSettings, onImp
 /* =================================================================
    LONG-TERM PORTFOLIO
 ================================================================= */
-const emptyPosition = () => ({ id: null, coin: "BTC", customCoin: "", margin: "", leverage: "3", entry: "", mark: "", liquidation: "", ath: "", delisted: false, paused: false, notes: "" });
+const emptyPosition = () => ({ id: null, coin: "BTC", customCoin: "", margin: "", leverage: "3", entry: "", mark: "", liquidation: "", ath: "", delisted: false, paused: false, notes: "", account: "phemex" });
 function PositionForm({ initial, onSave, onCancel }) {
     const [p, setP] = useState(initial || emptyPosition());
     const set = (k, v) => setP((prev) => ({ ...prev, [k]: v }));
@@ -1067,7 +1088,9 @@ function PositionForm({ initial, onSave, onCancel }) {
             React.createElement(Field, { label: "Liquidation price ($)" },
                 React.createElement(TextInput, { type: "number", step: "any", value: p.liquidation, onChange: (e) => set("liquidation", e.target.value) })),
             React.createElement(Field, { label: "ATH ($)", hint: "Or fetch after saving" },
-                React.createElement(TextInput, { type: "number", step: "any", value: p.ath, onChange: (e) => set("ath", e.target.value) }))),
+                React.createElement(TextInput, { type: "number", step: "any", value: p.ath, onChange: (e) => set("ath", e.target.value) })),
+            React.createElement(Field, { label: "Account" },
+                React.createElement(AccountSelect, { value: p.account, onChange: (v) => set("account", v) }))),
         React.createElement("label", { className: "flex items-center gap-2", style: { fontSize: 12, color: C.muted, fontFamily: "Inter" } },
             React.createElement("input", { type: "checkbox", checked: p.delisted, onChange: (e) => set("delisted", e.target.checked) }),
             " Delisted \u2014 keep visible, skip live price fetch"),
@@ -1101,6 +1124,7 @@ function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAt
                 React.createElement(Badge, { tone: "violet" },
                     p.leverage,
                     "x"),
+                React.createElement(AccountBadge, { account: p.account }),
                 p.delisted && React.createElement(Badge, { tone: "muted" }, "Delisted"),
                 p.paused && React.createElement(Badge, { tone: "gold" }, "Paused — tracking re-buy")),
             React.createElement("div", { className: "flex items-center gap-4", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
@@ -1269,7 +1293,28 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
                 " Add position")),
         showForm && React.createElement(PositionForm, { initial: editing, onSave: savePosition, onCancel: () => { setShowForm(false); setEditing(null); } }),
         positions.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
-            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-2" }, sortedPositions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause }))))),
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, "No long-term positions yet."))) : (React.createElement("div", { className: "flex flex-col gap-5" }, ACCOUNTS.map((acc) => {
+            const items = sortedPositions.filter((p) => (p.account || "phemex") === acc.id);
+            if (!items.length)
+                return null;
+            const accMargin = items.filter((p) => !p.paused).reduce((s, p) => s + p.margin, 0);
+            const accEquity = items.filter((p) => !p.paused).reduce((s, p) => {
+                var _a;
+                const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
+                const notional = p.margin * p.leverage;
+                const qty = p.entry ? notional / p.entry : 0;
+                return s + (p.margin + (qty * price - notional));
+            }, 0);
+            return (React.createElement("div", { key: acc.id, className: "flex flex-col gap-2" },
+                React.createElement("div", { className: "flex items-center justify-between" },
+                    React.createElement("div", { className: "flex items-center gap-2" },
+                        React.createElement(AccountBadge, { account: acc.id }),
+                        React.createElement("span", { style: { fontFamily: "Inter", fontSize: 12, color: C.muted } },
+                            items.length, " position", items.length === 1 ? "" : "s")),
+                    React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.faint } },
+                        fmtUsd(accMargin), " margin \u00b7 ", fmtUsd(accEquity), " equity")),
+                items.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause })))));
+        }))),
         positions.length > 0 && (React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
             React.createElement(SummaryCard, { label: "Total at 5x entry", value: fmtUsd(totalAt5x), tone: totalAt5x >= 0 ? "gold" : "loss" }),
             React.createElement(SummaryCard, { label: "Total at 10x entry", value: fmtUsd(totalAt10x), tone: totalAt10x >= 0 ? "gold" : "loss" }),
@@ -1769,7 +1814,7 @@ function App({ onSignOut, userEmail }) {
         if (isClosed(t)) {
             const price = (_a = prices[coinIdFor(t.coin)]) !== null && _a !== void 0 ? _a : null;
             const c = computeTrade(t, price);
-            const ledgerEntryData = { type: "trade", date: t.date, coin: t.coin, side: t.side, gain: c.netGain, sourceTradeId: t.id };
+            const ledgerEntryData = { type: "trade", date: t.date, coin: t.coin, side: t.side, gain: c.netGain, sourceTradeId: t.id, account: t.account || "phemex" };
             if (t.ledgerEntryId) {
                 setLedger((prev) => prev.map((e) => (e.id === t.ledgerEntryId ? { ...e, ...ledgerEntryData } : e)));
             }
@@ -1969,6 +2014,7 @@ function App({ onSignOut, userEmail }) {
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
+
 
 
 
