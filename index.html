@@ -41,6 +41,7 @@
 
 
 
+
 "use strict";
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 /* ---------------------------------------------------------------
@@ -1187,7 +1188,7 @@ function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAt
                 React.createElement(RefreshCw, { size: 13, className: fetchingAth ? "animate-spin" : "" }),
                 " Fetch ATH from CoinGecko"))))));
 }
-function LongTermTab({ positions, setPositions, prices, transfers, setTransfers, ledgerByCoin, ledgerAutoSweep, legacy, setLegacy, onImportHistory, hasImported, cash, setCash }) {
+function LongTermTab({ positions, setPositions, prices, transfers, setTransfers, ledgerByCoin, ledger, pullFraction, legacy, setLegacy, onImportHistory, hasImported, cash, setCash }) {
     const [showForm, setShowForm] = useState(false);
     const [editing, setEditing] = useState(null);
     const [fetchingId, setFetchingId] = useState(null);
@@ -1237,8 +1238,9 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     // Uninvested cash isn't attributed to either exchange, so it only
     // folds into the total when viewing both accounts combined.
     const totalValue = positionsEquity + (viewAccount === "total" ? cashAmount : 0);
-    const manualTransfers = transfers.reduce((s, t) => s + t.amount, 0);
+    const manualTransfers = transfers.filter((t) => viewAccount === "total" || (t.account || "phemex") === viewAccount).reduce((s, t) => s + t.amount, 0);
     const legacyTotal = legacy.reduce((s, l) => s + l.value, 0);
+    const ledgerAutoSweep = ledger.filter((e) => viewAccount === "total" || (e.account || "phemex") === viewAccount).reduce((s, e) => s + ledgerSweep(e, pullFraction), 0);
     const totalTransfers = manualTransfers + ledgerAutoSweep;
     // Projected totals if every position's price hit 5x / 10x / its ATH,
     // measured from entry price — not current price — same math as each
@@ -1267,7 +1269,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     const addTransfer = () => {
         if (!transferAmount || Number(transferAmount) <= 0)
             return;
-        setTransfers((prev) => [...prev, { id: uid(), amount: Number(transferAmount), date: todayStr() }]);
+        setTransfers((prev) => [...prev, { id: uid(), amount: Number(transferAmount), date: todayStr(), account: viewAccount === "total" ? "phemex" : viewAccount }]);
         setTransferAmount("");
     };
     const deleteLegacy = (id) => setLegacy((prev) => prev.filter((l) => l.id !== id));
@@ -1999,12 +2001,13 @@ function App({ onSignOut, userEmail }) {
                                 ")")),
                         showClosed && (React.createElement("div", { className: "flex flex-col gap-2" }, closedTrades.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((t) => (React.createElement(OpenTradeRow, { key: t.id, t: t, price: prices[coinIdFor(t.coin)], onEdit: (tt) => { setEditing(tt); setShowForm(true); }, onDelete: deleteTrade }))))))))),
                 tab === "ledger" && React.createElement(LedgerTab, { ledger: ledger, setLedger: setLedger, ledgerSettings: ledgerSettings, setLedgerSettings: setLedgerSettings, onImportHistory: importHistory, hasImported: hasImportedHistory, longTermCash: longTermCash, setLongTermCash: setLongTermCash, prices: prices }),
-                tab === "longterm" && React.createElement(LongTermTab, { positions: positions, setPositions: setPositions, prices: prices, transfers: transfers, setTransfers: setTransfers, ledgerByCoin: ledgerByCoin, ledgerAutoSweep: ledgerAutoSweep, legacy: legacy, setLegacy: setLegacy, onImportHistory: importHistory, hasImported: hasImportedHistory, cash: longTermCash, setCash: setLongTermCash }),
+                tab === "longterm" && React.createElement(LongTermTab, { positions: positions, setPositions: setPositions, prices: prices, transfers: transfers, setTransfers: setTransfers, ledgerByCoin: ledgerByCoin, ledger: ledger, pullFraction: pullFraction, legacy: legacy, setLegacy: setLegacy, onImportHistory: importHistory, hasImported: hasImportedHistory, cash: longTermCash, setCash: setLongTermCash }),
                 tab === "goals" && React.createElement(GoalsTab, { goals: goals, setGoals: setGoals, currentPortfolioValue: netWorth }))),
         React.createElement("footer", { className: "px-5 py-4 border-t text-center", style: { borderColor: C.hair } },
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
+
 
 
 
