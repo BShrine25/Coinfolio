@@ -42,6 +42,8 @@
 
 
 
+
+
 "use strict";
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 /* ---------------------------------------------------------------
@@ -448,16 +450,52 @@ function Badge({ children, tone = "muted" }) {
     const tones = { muted: { color: C.muted, background: "#8890A022" }, gain: { color: C.gain, background: C.gainDim }, loss: { color: C.loss, background: C.lossDim }, gold: { color: C.gold, background: C.goldDim }, violet: { color: C.violet, background: C.violetDim } };
     return React.createElement("span", { className: "px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wide", style: { ...tones[tone], fontFamily: "Inter" } }, children);
 }
-const ACCOUNTS = [
-    { id: "phemex", label: "Phemex" },
-    { id: "kcex", label: "KCEX" },
-];
+// Only KCEX ships as a default now — but accounts are otherwise an
+// open, user-extensible list (same pattern as custom coins) so adding
+// a new exchange later is just "+ Add account", no code change needed.
+// Old data tagged with a retired account id (e.g. a former "phemex")
+// still displays fine via the fallback label below.
+const DEFAULT_ACCOUNTS = [{ id: "kcex", label: "KCEX" }];
+let CUSTOM_ACCOUNTS = []; // [{ id, label }]
+function allAccounts() { return [...DEFAULT_ACCOUNTS, ...CUSTOM_ACCOUNTS]; }
+function registerCustomAccount(label) {
+    const id = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    if (!id)
+        return null;
+    if (!allAccounts().some((a) => a.id === id)) {
+        CUSTOM_ACCOUNTS = [...CUSTOM_ACCOUNTS, { id, label: label.trim() }];
+        safeStorageSet("coinfolio_custom_accounts", CUSTOM_ACCOUNTS);
+    }
+    return id;
+}
+function accountLabel(id) {
+    var _a;
+    const found = allAccounts().find((a) => a.id === id);
+    if (found)
+        return found.label;
+    if (!id)
+        return "KCEX";
+    return ((_a = id[0]) !== null && _a !== void 0 ? _a : "").toUpperCase() + id.slice(1);
+}
 function AccountSelect({ value, onChange, className }) {
-    return (React.createElement(Select, { value: value || "phemex", onChange: (e) => onChange(e.target.value), className: className }, ACCOUNTS.map((a) => React.createElement("option", { key: a.id, value: a.id }, a.label))));
+    const handleChange = (v) => {
+        if (v === "__new__") {
+            const label = window.prompt("New account name (e.g. Binance, Coinbase):");
+            if (label && label.trim()) {
+                const id = registerCustomAccount(label);
+                if (id)
+                    onChange(id);
+            }
+            return;
+        }
+        onChange(v);
+    };
+    return (React.createElement(Select, { value: value || "kcex", onChange: (e) => handleChange(e.target.value), className: className },
+        allAccounts().map((a) => React.createElement("option", { key: a.id, value: a.id }, a.label)),
+        React.createElement("option", { value: "__new__" }, "+ Add account\u2026")));
 }
 function AccountBadge({ account }) {
-    const acc = ACCOUNTS.find((a) => a.id === account) || ACCOUNTS[0];
-    return React.createElement(Badge, { tone: account === "kcex" ? "violet" : "muted" }, acc.label);
+    return React.createElement(Badge, { tone: account === "kcex" ? "violet" : "muted" }, accountLabel(account));
 }
 function SummaryCard({ label, value, sub, tone }) {
     const color = tone === "gain" ? C.gain : tone === "loss" ? C.loss : tone === "gold" ? C.gold : C.text;
@@ -527,7 +565,7 @@ function TickerStrip({ prices, coins, loading }) {
 /* =================================================================
    SPOT TRADES (generic buy/sell log)
 ================================================================= */
-const emptyTrade = () => ({ id: null, coin: "BTC", customCoin: "", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], gain: "", status: "open", date: todayStr(), notes: "", ledgerEntryId: null, account: "phemex" });
+const emptyTrade = () => ({ id: null, coin: "BTC", customCoin: "", side: "long", margin: "", totalMargin: "", entry: "", exit: "", leverage: "10", fees: [], gain: "", status: "open", date: todayStr(), notes: "", ledgerEntryId: null, account: "kcex" });
 function TradeForm({ initial, onSave, onCancel, prices }) {
     var _a;
     const [t, setT] = useState(initial || emptyTrade());
@@ -823,7 +861,7 @@ function Dashboard({ trades, prices, overrides, setOverride, onRefresh, loading,
 /* =================================================================
    LEDGER (leverage compounding log)
 ================================================================= */
-const emptyLedgerEntry = () => ({ id: null, type: "deposit", date: todayStr(), depositAmount: "", account: "phemex" });
+const emptyLedgerEntry = () => ({ id: null, type: "deposit", date: todayStr(), depositAmount: "", account: "kcex" });
 // Deposits only — trades are logged in Open Trades and sync here automatically.
 function LedgerEntryForm({ initial, onSave, onCancel, pullFraction }) {
     const [e, setE] = useState(initial || emptyLedgerEntry());
@@ -1057,7 +1095,7 @@ function LedgerTab({ ledger, setLedger, ledgerSettings, setLedgerSettings, onImp
 /* =================================================================
    LONG-TERM PORTFOLIO
 ================================================================= */
-const emptyPosition = () => ({ id: null, coin: "BTC", customCoin: "", margin: "", leverage: "3", entry: "", mark: "", liquidation: "", ath: "", delisted: false, paused: false, notes: "", account: "phemex" });
+const emptyPosition = () => ({ id: null, coin: "BTC", customCoin: "", margin: "", leverage: "3", entry: "", mark: "", liquidation: "", ath: "", delisted: false, paused: false, liquidated: false, notes: "", account: "kcex" });
 function PositionForm({ initial, onSave, onCancel }) {
     const [p, setP] = useState(initial || emptyPosition());
     const set = (k, v) => setP((prev) => ({ ...prev, [k]: v }));
@@ -1106,19 +1144,21 @@ function PositionForm({ initial, onSave, onCancel }) {
                 React.createElement(Check, { size: 14 }),
                 " Save position"))));
 }
-function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAth, fetchingAth, onTogglePause }) {
+function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAth, fetchingAth, onTogglePause, onToggleLiquidate }) {
     const [expanded, setExpanded] = useState(false);
     const notional = p.margin * p.leverage;
     const qty = p.entry ? notional / p.entry : 0;
     const markPrice = price !== null && price !== void 0 ? price : p.mark;
     const notionalValue = qty * markPrice;
-    const pnl = notionalValue - notional;
-    const equity = p.margin + pnl;
-    const pnlPct = p.margin !== 0 ? (pnl / p.margin) * 100 : 0;
+    // Liquidated = written off entirely: $0 equity, no live value, no
+    // projections — only the margin keeps counting (shown elsewhere).
+    const pnl = p.liquidated ? -p.margin : notionalValue - notional;
+    const equity = p.liquidated ? 0 : p.margin + pnl;
+    const pnlPct = p.liquidated ? -100 : (p.margin !== 0 ? (pnl / p.margin) * 100 : 0);
     const athPnl = p.ath ? qty * p.ath - notional : null;
     const pnlAt5x = qty * p.entry * 5 - notional;
     const pnlAt10x = qty * p.entry * 10 - notional;
-    return (React.createElement(Panel, { style: { overflow: "hidden", opacity: p.paused ? 0.5 : 1 } },
+    return (React.createElement(Panel, { style: { overflow: "hidden", opacity: (p.paused || p.liquidated) ? 0.5 : 1 } },
         React.createElement("button", { onClick: () => setExpanded((v) => !v), className: "w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.02]", style: { background: "transparent", border: "none", cursor: "pointer" } },
             React.createElement("div", { className: "flex items-center gap-2.5" },
                 React.createElement(ChevronRight, { size: 14, color: C.faint, style: { transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }),
@@ -1128,7 +1168,8 @@ function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAt
                     "x"),
                 React.createElement(AccountBadge, { account: p.account }),
                 p.delisted && React.createElement(Badge, { tone: "muted" }, "Delisted"),
-                p.paused && React.createElement(Badge, { tone: "gold" }, "Paused — tracking re-buy")),
+                p.paused && React.createElement(Badge, { tone: "gold" }, "Paused — tracking re-buy"),
+                p.liquidated && React.createElement(Badge, { tone: "loss" }, "Liquidated")),
             React.createElement("div", { className: "flex items-center gap-4", style: { fontFamily: "JetBrains Mono", fontSize: 12.5 } },
                 React.createElement("span", { style: { color: C.faint }, className: "hidden sm:inline" },
                     "Equity ",
@@ -1136,10 +1177,14 @@ function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAt
                 React.createElement("span", { style: { color: pnl >= 0 ? C.gain : C.loss, fontWeight: 600 } }, fmtPct(pnlPct)))),
         expanded && (React.createElement("div", { className: "flex flex-col gap-3 px-4 pb-4", style: { borderTop: `1px solid ${C.hair}` } },
             p.paused && React.createElement("p", { style: { fontFamily: "Inter", fontSize: 11, color: C.gold } }, "Paused — excluded from all totals until resumed. Figures below still update so you can see what buying back in now would cost."),
-            React.createElement("div", { className: "flex justify-end gap-2 pt-3" },
+            p.liquidated && React.createElement("p", { style: { fontFamily: "Inter", fontSize: 11, color: C.loss } }, "Liquidated — counts as $0 in total value and every projection below. Its margin still counts toward \"Total margin committed\" as a record of capital once moved here."),
+            React.createElement("div", { className: "flex justify-end gap-2 pt-3 flex-wrap" },
                 React.createElement(Button, { variant: "ghost", onClick: () => onTogglePause(p) },
                     p.paused ? React.createElement(Play, { size: 13 }) : React.createElement(Pause, { size: 13 }),
                     p.paused ? " Resume" : " Pause"),
+                React.createElement(Button, { variant: p.liquidated ? "ghost" : "danger", onClick: () => onToggleLiquidate(p) },
+                    p.liquidated ? React.createElement(Play, { size: 13 }) : React.createElement(X, { size: 13 }),
+                    p.liquidated ? " Restore" : " Liquidate"),
                 React.createElement(Button, { variant: "ghost", onClick: () => onEdit(p) },
                     React.createElement(Pencil, { size: 13 }),
                     " Edit"),
@@ -1184,7 +1229,7 @@ function PositionRow({ p, price, realizedFromLedger, onEdit, onDelete, onFetchAt
                 React.createElement("div", { className: "flex flex-col gap-0.5 pt-2" },
                     React.createElement("span", { style: { fontFamily: "Inter", fontSize: 10, color: C.faint, textTransform: "uppercase" } }, "At 10x entry"),
                     React.createElement("span", { style: { fontFamily: "JetBrains Mono", fontSize: 12, color: C.gold } }, fmtUsd(pnlAt10x)))),
-            !p.ath && !p.delisted && (React.createElement(Button, { variant: "ghost", onClick: () => onFetchAth(p), disabled: fetchingAth },
+            !p.ath && !p.delisted && !p.liquidated && (React.createElement(Button, { variant: "ghost", onClick: () => onFetchAth(p), disabled: fetchingAth },
                 React.createElement(RefreshCw, { size: 13, className: fetchingAth ? "animate-spin" : "" }),
                 " Fetch ATH from CoinGecko"))))));
 }
@@ -1199,11 +1244,17 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
         setEditing(null);
     };
     const deletePosition = (id) => setPositions((prev) => prev.filter((p) => p.id !== id));
-    const togglePause = (p) => savePosition({ ...p, paused: !p.paused });
+    const togglePause = (p) => savePosition({ ...p, paused: !p.paused, liquidated: false });
+    const toggleLiquidate = (p) => {
+        // Liquidated counts as $0 everywhere except margin (which still
+        // reflects how much capital was historically moved into
+        // long-term) — no live price to track once it's written off.
+        savePosition({ ...p, liquidated: !p.liquidated, paused: p.liquidated ? p.paused : false });
+    };
     const [viewAccount, setViewAccount] = useState("total");
     // Which account's book we're looking at — "total" combines both.
     // Everything below (cards, list, projections) is scoped to this.
-    const viewPositions = viewAccount === "total" ? positions : positions.filter((p) => (p.account || "phemex") === viewAccount);
+    const viewPositions = viewAccount === "total" ? positions : positions.filter((p) => (p.account || "kcex") === viewAccount);
     // Paused positions ("sold, tracking a future re-buy") stay visible but
     // drop out of every total below, same treatment as if they weren't
     // held at all right now.
@@ -1228,6 +1279,8 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     const marginAt1x = activePositions.reduce((s, p) => s + (Number(p.leverage) === 1 ? p.margin : 0), 0);
     const positionsEquity = activePositions.reduce((s, p) => {
         var _a;
+        if (p.liquidated)
+            return s; // $0 contribution — margin still counts separately in totalMargin above
         const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
@@ -1238,38 +1291,44 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
     // Uninvested cash isn't attributed to either exchange, so it only
     // folds into the total when viewing both accounts combined.
     const totalValue = positionsEquity + (viewAccount === "total" ? cashAmount : 0);
-    const manualTransfers = transfers.filter((t) => viewAccount === "total" || (t.account || "phemex") === viewAccount).reduce((s, t) => s + t.amount, 0);
+    const manualTransfers = transfers.filter((t) => viewAccount === "total" || (t.account || "kcex") === viewAccount).reduce((s, t) => s + t.amount, 0);
     const legacyTotal = legacy.reduce((s, l) => s + l.value, 0);
-    const ledgerAutoSweep = ledger.filter((e) => viewAccount === "total" || (e.account || "phemex") === viewAccount).reduce((s, e) => s + ledgerSweep(e, pullFraction), 0);
+    const ledgerAutoSweep = ledger.filter((e) => viewAccount === "total" || (e.account || "kcex") === viewAccount).reduce((s, e) => s + ledgerSweep(e, pullFraction), 0);
     const totalTransfers = manualTransfers + ledgerAutoSweep;
     // Projected totals if every position's price hit 5x / 10x / its ATH,
     // measured from entry price — not current price — same math as each
     // position's own "At 5x" / "At 10x" / "At ATH" figures, just summed.
-    // Paused positions are excluded, same as every other total here.
-    const totalAt5x = activePositions.reduce((s, p) => {
+    // Paused AND liquidated positions are excluded here — a liquidated
+    // position is worth $0 going forward, no hypothetical price move
+    // changes that.
+    const projectionPositions = activePositions.filter((p) => !p.liquidated);
+    const totalAt5x = projectionPositions.reduce((s, p) => {
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
         return s + (qty * p.entry * 5 - notional);
     }, 0);
-    const totalAt10x = activePositions.reduce((s, p) => {
+    const totalAt10x = projectionPositions.reduce((s, p) => {
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
         return s + (qty * p.entry * 10 - notional);
     }, 0);
-    const positionsWithAth = activePositions.filter((p) => p.ath);
+    const positionsWithAth = projectionPositions.filter((p) => p.ath);
     const totalAtAth = positionsWithAth.reduce((s, p) => {
         const notional = p.margin * p.leverage;
         const qty = p.entry ? notional / p.entry : 0;
         return s + (qty * p.ath - notional);
     }, 0);
-    const missingAthCount = activePositions.length - positionsWithAth.length;
+    const missingAthCount = projectionPositions.length - positionsWithAth.length;
     // Ordered by leverage (highest first), alphabetical by coin within each
     // leverage tier — paused positions always sink to the very bottom.
-    const sortedPositions = [...viewPositions].sort((a, b) => (Number(!!a.paused) - Number(!!b.paused)) || (Number(b.leverage) - Number(a.leverage)) || a.coin.localeCompare(b.coin));
+    const sortFn = (a, b) => (Number(!!a.paused) - Number(!!b.paused)) || (Number(b.leverage) - Number(a.leverage)) || a.coin.localeCompare(b.coin);
+    const sortedPositions = viewPositions.filter((p) => !p.liquidated).sort(sortFn);
+    const liquidatedPositions = viewPositions.filter((p) => p.liquidated).sort(sortFn);
+    const [showLiquidated, setShowLiquidated] = useState(false);
     const addTransfer = () => {
         if (!transferAmount || Number(transferAmount) <= 0)
             return;
-        setTransfers((prev) => [...prev, { id: uid(), amount: Number(transferAmount), date: todayStr(), account: viewAccount === "total" ? "phemex" : viewAccount }]);
+        setTransfers((prev) => [...prev, { id: uid(), amount: Number(transferAmount), date: todayStr(), account: viewAccount === "total" ? "kcex" : viewAccount }]);
         setTransferAmount("");
     };
     const deleteLegacy = (id) => setLegacy((prev) => prev.filter((l) => l.id !== id));
@@ -1284,7 +1343,7 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
         React.createElement("div", { className: "relative inline-block self-start" },
             React.createElement("select", { value: viewAccount, onChange: (e) => setViewAccount(e.target.value), className: "appearance-none pr-8 pl-0 py-1 outline-none cursor-pointer", style: { fontFamily: "Space Grotesk", fontSize: 20, fontWeight: 700, color: C.text, background: "transparent", border: "none" } },
                 React.createElement("option", { value: "total", style: { background: C.panel } }, "Total \u2014 all accounts"),
-                ACCOUNTS.map((a) => React.createElement("option", { key: a.id, value: a.id, style: { background: C.panel } }, a.label))),
+                allAccounts().map((a) => React.createElement("option", { key: a.id, value: a.id, style: { background: C.panel } }, a.label))),
             React.createElement(ChevronRight, { size: 16, color: C.muted, style: { position: "absolute", right: 2, top: "50%", transform: "translateY(-50%) rotate(90deg)", pointerEvents: "none" } })),
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(SummaryCard, { label: "Total value", value: fmtUsd(totalValue), sub: viewAccount === "total" ? "Invested equity + uninvested cash" : "Invested equity for this account" }),
@@ -1307,7 +1366,13 @@ function LongTermTab({ positions, setPositions, prices, transfers, setTransfers,
                 " Add position")),
         showForm && React.createElement(PositionForm, { initial: editing || (viewAccount !== "total" ? { ...emptyPosition(), account: viewAccount } : null), onSave: savePosition, onCancel: () => { setShowForm(false); setEditing(null); } }),
         viewPositions.length === 0 ? (React.createElement(Panel, { style: { padding: 32 }, className: "text-center" },
-            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, viewAccount === "total" ? "No long-term positions yet." : `No ${ACCOUNTS.find((a) => a.id === viewAccount).label} positions yet.`))) : (React.createElement("div", { className: "flex flex-col gap-2" }, sortedPositions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: p.delisted ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause }))))),
+            React.createElement("p", { style: { color: C.muted, fontFamily: "Inter", fontSize: 14 } }, viewAccount === "total" ? "No long-term positions yet." : `No ${accountLabel(viewAccount)} positions yet.`))) : (React.createElement("div", { className: "flex flex-col gap-2" }, sortedPositions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: (p.delisted || p.liquidated) ? null : prices[coinIdFor(p.coin)], realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause, onToggleLiquidate: toggleLiquidate }))))),
+        liquidatedPositions.length > 0 && (React.createElement(React.Fragment, null,
+            React.createElement("button", { onClick: () => setShowLiquidated((v) => !v), className: "flex items-center gap-2 pt-2", style: { background: "transparent", border: "none", cursor: "pointer" } },
+                React.createElement(ChevronRight, { size: 14, color: C.faint, style: { transform: showLiquidated ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }),
+                React.createElement("h2", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } },
+                    "Liquidated (", liquidatedPositions.length, ")")),
+            showLiquidated && React.createElement("div", { className: "flex flex-col gap-2" }, liquidatedPositions.map((p) => (React.createElement(PositionRow, { key: p.id, p: p, price: null, realizedFromLedger: ledgerByCoin[p.coin] || 0, onEdit: (pos) => { setEditing(pos); setShowForm(true); }, onDelete: deletePosition, onFetchAth: fetchAth, fetchingAth: fetchingId === p.id, onTogglePause: togglePause, onToggleLiquidate: toggleLiquidate })))))),
         viewPositions.length > 0 && (React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
             React.createElement(SummaryCard, { label: "Total at 5x entry", value: fmtUsd(totalAt5x), tone: totalAt5x >= 0 ? "gold" : "loss" }),
             React.createElement(SummaryCard, { label: "Total at 10x entry", value: fmtUsd(totalAt10x), tone: totalAt10x >= 0 ? "gold" : "loss" }),
@@ -1580,12 +1645,14 @@ function App({ onSignOut, userEmail }) {
     const lastSyncedRef = useRef({});
     useEffect(() => {
         (async () => {
-            const [t, g, o, led, ledSet, pos, tr, leg, cash, custom] = await Promise.all([
+            const [t, g, o, led, ledSet, pos, tr, leg, cash, custom, customAccts] = await Promise.all([
                 safeStorageGet("coinfolio_trades"), safeStorageGet("coinfolio_goals"), safeStorageGet("coinfolio_overrides"),
                 safeStorageGet("coinfolio_ledger"), safeStorageGet("coinfolio_ledger_settings"),
                 safeStorageGet("coinfolio_longterm"), safeStorageGet("coinfolio_transfers"), safeStorageGet("coinfolio_legacy"),
-                safeStorageGet("coinfolio_longterm_cash"), safeStorageGet("coinfolio_custom_coins"),
+                safeStorageGet("coinfolio_longterm_cash"), safeStorageGet("coinfolio_custom_coins"), safeStorageGet("coinfolio_custom_accounts"),
             ]);
+            if (customAccts)
+                CUSTOM_ACCOUNTS = customAccts;
             const effTrades = t || [];
             const effGoals = g || [];
             const effOverrides = o || {};
@@ -1807,7 +1874,7 @@ function App({ onSignOut, userEmail }) {
         if (isClosed(t)) {
             const price = (_a = prices[coinIdFor(t.coin)]) !== null && _a !== void 0 ? _a : null;
             const c = computeTrade(t, price);
-            const ledgerEntryData = { type: "trade", date: t.date, coin: t.coin, side: t.side, gain: c.netGain, sourceTradeId: t.id, account: t.account || "phemex" };
+            const ledgerEntryData = { type: "trade", date: t.date, coin: t.coin, side: t.side, gain: c.netGain, sourceTradeId: t.id, account: t.account || "kcex" };
             if (t.ledgerEntryId) {
                 setLedger((prev) => prev.map((e) => (e.id === t.ledgerEntryId ? { ...e, ...ledgerEntryData } : e)));
             }
@@ -1864,6 +1931,8 @@ function App({ onSignOut, userEmail }) {
     const longTermValue = useMemo(() => {
         const positionsEquity = positions.filter((p) => !p.paused).reduce((s, p) => {
             var _a;
+            if (p.liquidated)
+                return s; // $0 contribution
             const price = p.delisted ? p.mark : ((_a = prices[coinIdFor(p.coin)]) !== null && _a !== void 0 ? _a : p.mark);
             const notional = p.margin * p.leverage;
             const qty = p.entry ? notional / p.entry : 0;
@@ -2007,6 +2076,8 @@ function App({ onSignOut, userEmail }) {
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
+
+
 
 
 
