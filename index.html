@@ -44,6 +44,7 @@
 
 
 
+
 "use strict";
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 /* ---------------------------------------------------------------
@@ -1059,7 +1060,11 @@ function LedgerTab({ ledger, setLedger, ledgerSettings, setLedgerSettings, onImp
     let running = 0;
     const withRunning = ledger.map((e) => { running += ledgerDelta(e, pullFraction); return { ...e, running }; });
     const currentBalance = withRunning.length ? withRunning[withRunning.length - 1].running : 0;
-    const initialBalance = ledger[0] ? (ledger[0].type === "deposit" ? ledger[0].depositAmount : 0) : 0;
+    // Use the post-split amount (what actually lands in the ledger), not
+    // the raw deposit — otherwise "Pace to goal" compares your real
+    // balance against a starting point that's double what ever entered
+    // the ledger, making it look like you're permanently down half.
+    const initialBalance = ledger[0] ? ledgerDelta(ledger[0], pullFraction) : 0;
     const firstDate = ledger.length ? ledger.slice().sort((a, b) => a.date.localeCompare(b.date))[0].date : null;
     const tradeEntries = ledger.filter((e) => e.type === "trade");
     const totalDeposits = ledger.filter((e) => e.type === "deposit").reduce((s, e) => s + e.depositAmount, 0);
@@ -1073,7 +1078,7 @@ function LedgerTab({ ledger, setLedger, ledgerSettings, setLedgerSettings, onImp
                 React.createElement(Zap, { size: 14 }),
                 " Import now"))),
         React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
-            React.createElement(SummaryCard, { label: "Current balance", value: fmtUsd(currentBalance) }),
+            React.createElement(SummaryCard, { label: "Current balance", value: fmtUsd(currentBalance), sub: `${fmtUsd(ledger.reduce((s, e) => s + ledgerSweep(e, pullFraction), 0))} swept to long-term, not lost` }),
             React.createElement(SummaryCard, { label: "Total deposits", value: fmtUsd(totalDeposits), tone: "gold" }),
             React.createElement(SummaryCard, { label: "Total realized gain", value: fmtUsd(totalRealized), tone: totalRealized >= 0 ? "gain" : "loss" }),
             React.createElement(SummaryCard, { label: "Trades logged", value: tradeEntries.length })),
@@ -2076,6 +2081,7 @@ function App({ onSignOut, userEmail }) {
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 11, color: C.faint } }, "Prices via CoinGecko's public API where available. Data is saved to your account only."))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppRoot, null));
+
 
 
 
