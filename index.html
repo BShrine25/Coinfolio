@@ -349,10 +349,12 @@ const getWeekdayName = (dateStr) => WEEKDAYS[new Date(dateStr + "T00:00:00").get
 // added in full. pullFraction is editable (default 50%).
 function ledgerDelta(entry, pullFraction) {
     const amount = entry.type === "deposit" ? entry.depositAmount : entry.gain;
+    if (entry.type !== "deposit" && amount < 0) return amount; // losses: nothing swept, ledger absorbs full loss
     return amount * (1 - (pullFraction !== null && pullFraction !== void 0 ? pullFraction : 50) / 100);
 }
 function ledgerSweep(entry, pullFraction) {
     const amount = entry.type === "deposit" ? entry.depositAmount : entry.gain;
+    if (entry.type !== "deposit" && amount < 0) return 0; // losses: nothing swept to long-term
     return amount * ((pullFraction !== null && pullFraction !== void 0 ? pullFraction : 50) / 100);
 }
 function groupSum(entries, keyFn) {
@@ -370,8 +372,13 @@ function groupSum(entries, keyFn) {
     });
     return Object.values(map);
 }
-function paceToGoal({ initialBalance, currentBalance, target, positionPct, leverage, targetGainPct, pullFraction, tradesMade, firstDate }) {
-    const multiplier = 1 + (positionPct / 100) * leverage * (targetGainPct / 100) * (1 - (pullFraction || 0) / 100);
+function paceToGoal({ initialBalance, currentBalance, target, positionPct, leverage, targetGainPct, pullFraction, winRate, avgLossPct, tradesMade, firstDate }) {
+    // Wins sweep pull% to long-term; losses sweep nothing and hit the ledger in full.
+    const w = (winRate === undefined || winRate === null || isNaN(winRate) ? 100 : Math.min(Math.max(winRate, 0), 100)) / 100;
+    const lossPct = avgLossPct > 0 ? avgLossPct : targetGainPct;
+    const perTrade = (positionPct / 100) * leverage;
+    const expected = w * (targetGainPct / 100) * (1 - (pullFraction || 0) / 100) - (1 - w) * (lossPct / 100);
+    const multiplier = 1 + perTrade * expected;
     if (!(multiplier > 1) || !(initialBalance > 0) || !(currentBalance > 0) || !(target > initialBalance))
         return null;
     const totalTradesFromStart = Math.ceil(Math.log(target / initialBalance) / Math.log(multiplier));
@@ -947,13 +954,14 @@ function PaceToGoalCard({ settings, setSettings, initialBalance, currentBalance,
         initialBalance, currentBalance, target: Number(settings.target) || 0,
         positionPct: Number(settings.positionPct) || 0, leverage: Number(settings.leverage) || 1,
         targetGainPct: Number(settings.targetGainPct) || 0, pullFraction: Number(settings.pullFraction) || 0,
+        winRate: settings.winRate === "" || settings.winRate === undefined ? 100 : Number(settings.winRate), avgLossPct: Number(settings.avgLossPct) || 0,
         tradesMade, firstDate,
     }), [initialBalance, currentBalance, settings, tradesMade, firstDate]);
     return (React.createElement(Panel, { style: { padding: 18 }, className: "flex flex-col gap-4" },
         React.createElement("div", { className: "flex items-center gap-2" },
             React.createElement(Zap, { size: 16, color: C.gold }),
             React.createElement("h3", { style: { fontFamily: "Space Grotesk", fontSize: 15, color: C.text, fontWeight: 600 } }, "Pace to goal")),
-        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
+        React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
             React.createElement(Field, { label: "Target ($)" },
                 React.createElement(TextInput, { type: "number", step: "any", value: settings.target, onChange: (e) => set("target", e.target.value) })),
             React.createElement(Field, { label: "Position size (%)", hint: "Of bankroll per trade" },
@@ -963,7 +971,11 @@ function PaceToGoalCard({ settings, setSettings, initialBalance, currentBalance,
             React.createElement(Field, { label: "Target gain / trade (%)" },
                 React.createElement(TextInput, { type: "number", step: "any", value: settings.targetGainPct, onChange: (e) => set("targetGainPct", e.target.value) })),
             React.createElement(Field, { label: "Pull to long-term (%)", hint: "Share of each gain swept out" },
-                React.createElement(TextInput, { type: "number", step: "any", value: settings.pullFraction, onChange: (e) => set("pullFraction", e.target.value) }))),
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.pullFraction, onChange: (e) => set("pullFraction", e.target.value) })),
+            React.createElement(Field, { label: "Win rate (%)", hint: "Losses sweep $0" },
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.winRate === undefined ? "100" : settings.winRate, onChange: (e) => set("winRate", e.target.value) })),
+            React.createElement(Field, { label: "Avg loss / trade (%)", hint: "Blank = same as gain" },
+                React.createElement(TextInput, { type: "number", step: "any", value: settings.avgLossPct === undefined ? "" : settings.avgLossPct, onChange: (e) => set("avgLossPct", e.target.value) }))),
         !result ? (React.createElement("div", { className: "px-3 py-2.5 rounded", style: { background: C.panelRaised, border: `1px solid ${C.hair2}` } },
             React.createElement("span", { style: { fontFamily: "Inter", fontSize: 13, color: C.muted } }, "Set a target above your current balance, and a starting deposit on the ledger, to see pace."))) : (React.createElement(React.Fragment, null,
             React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
